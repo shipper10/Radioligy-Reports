@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0f3d5e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="تقارير الأشعة">
+<meta name="description" content="كتابة تقارير الأشعة بسرعة من قوالب جاهزة وبنوك تعابير – تعمل بدون إنترنت">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<title>تقارير الأشعة</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body spellcheck="false">
+
+<!-- الشاشة الرئيسية -->
+<main id="home" class="view"></main>
+
+<!-- شاشة المحرر -->
+<main id="editor" class="view" hidden>
+  <header id="appbar">
+    <button class="ab" type="button" id="abBack" aria-label="رجوع">‹</button>
+    <div class="ab-title"><b id="abTitle"></b><small id="abSub"></small></div>
+    <button class="ab txt" type="button" id="abVar">النسخة ▾</button>
+    <button class="ab" type="button" id="abMore" aria-label="المزيد">⋯</button>
+  </header>
+
+  <div id="viewport"><div id="scaler"><div id="stage"><div class="pages" id="pages"></div></div></div></div>
+
+  <div id="ctxbar" hidden>
+    <button class="cb g" type="button" data-do="addli">＋ بند</button>
+    <button class="cb" type="button" data-do="up">↑</button>
+    <button class="cb" type="button" data-do="down">↓</button>
+    <button class="cb r" type="button" data-do="del">حذف</button>
+    <button class="cb p" type="button" data-do="next">[ ] التالي</button>
+  </div>
+
+  <nav id="dock" aria-label="الأدوات">
+    <button class="dk" type="button" data-open="bank"><b>📖</b><span>التعابير</span></button>
+    <button class="dk" type="button" data-open="add"><b>＋</b><span>إضافة</span></button>
+    <button class="dk" type="button" data-open="fmt"><b>Aa</b><span>تنسيق</span></button>
+    <button class="dk" type="button" data-open="page"><b>☰</b><span>الصفحة</span></button>
+    <button class="dk" type="button" data-open="xp"><b>⎙</b><span>تصدير</span></button>
+  </nav>
+
+  <aside id="panel" aria-label="لوحة التحكم" data-tab="xp"></aside>
+  <aside id="bank" aria-label="بنك التعابير" hidden></aside>
+</main>
+
+<div id="sheet" hidden></div>
+<div id="toast" hidden></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

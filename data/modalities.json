@@ -1,0 +1,8 @@
+{
+  "_help": "كل مجلد في جذر المستودع اسمه '<NAME> REPORTS' يُحوَّل تلقائياً إلى قسم. هنا تضبط اسم القسم العربي/الأيقونة/الترتيب. الأقسام planned=true تظهر في الواجهة بعلامة 'قريباً' إلى أن يُضاف لها مجلد.",
+  "ULTRASOUND": { "id": "us",   "name": "Ultrasound", "name_ar": "السونار",         "icon": "🔊", "order": 1 },
+  "MRI":        { "id": "mri",  "name": "MRI",        "name_ar": "الرنين المغناطيسي", "icon": "🧲", "order": 2, "planned": true },
+  "CT":         { "id": "ct",   "name": "CT",         "name_ar": "الأشعة المقطعية",   "icon": "🌀", "order": 3, "planned": true },
+  "X-RAY":      { "id": "xr",   "name": "X-Ray",      "name_ar": "الأشعة السينية",    "icon": "🩻", "order": 4, "planned": true },
+  "MAMMOGRAPHY":{ "id": "mg",   "name": "Mammography","name_ar": "تصوير الثدي",       "icon": "🎀", "order": 5, "planned": true }
+}
