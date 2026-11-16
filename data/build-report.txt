@@ -1,0 +1,4 @@
+Build report 20261116063613
+26 studies, 85 variants, 766 phrases
+
+OK: no lost text, no warnings.

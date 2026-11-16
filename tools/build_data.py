@@ -50,6 +50,33 @@ def clean(t):
     return re.sub(r"[ ]{2,}", " ", t).strip()
 
 
+def _n(t):
+    """تطبيع النص للمقارنة (يتجاهل ▪ والمسافات والنقطتين)."""
+    t = t.replace("▪", " ").replace("\u00a0", " ").replace("\t", " ")
+    return re.sub(r"\s+", " ", t).strip(" :").lower()
+
+
+def raw_paragraph_texts(doc):
+    """كل نصوص الملف بما فيها الجداول والصناديق النصية (للتحقق أنه لم يضِع شيء)."""
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    out = []
+    for p in doc.element.body.iter(ns + "p"):
+        t = "".join(x.text or "" for x in p.iter(ns + "t"))
+        if t.strip():
+            out.append(t)
+    return out
+
+
+def check_lost(path, doc, captured, warnings):
+    """يقارن كل فقرة في الملف بما التقطه المحلّل؛ أي فقرة لم تُلتقط تُسجَّل كتنبيه."""
+    cap = [_n(c) for c in captured]
+    joined = "\n".join(cap)
+    for t in raw_paragraph_texts(doc):
+        n = _n(t)
+        if n and n not in cap and n not in joined:
+            warnings.append(f"نص مفقود في {path.parent.name}/{path.name}: «{t.strip()[:90]}»")
+
+
 def info(pa):
     """يرجع (نص, هل بند قائمة, هل منزاح, هل غامق كله, هل منتصف)."""
     ppr = pa._p.pPr
@@ -61,7 +88,7 @@ def info(pa):
     return pa.text, is_li, bool(ind and ind.mm > 1), bold, center
 
 
-def parse_report(path):
+def parse_report(path, warnings=None):
     d = docx.Document(path)
     fields, title, blocks, closing = [], None, [], []
     for pa in d.paragraphs:
@@ -80,6 +107,10 @@ def parse_report(path):
         elif t:
             closing.append(t)
     fields = [f for f in fields if f]
+    if warnings is not None:
+        if title is None:
+            warnings.append(f"{path.name}: لم يُعثر على عنوان (سطر مركزي غامق)")
+        check_lost(path, d, fields + ([title] if title else []) + [b["x"] for b in blocks] + closing, warnings)
     out = {"title": title or path.stem.replace("_", " "), "blocks": blocks}
     if fields and fields != STD_FIELDS:
         out["fields"] = fields
@@ -103,7 +134,7 @@ def sub_kind(title):
     return ""
 
 
-def parse_bank(path):
+def parse_bank(path, warnings=None):
     d = docx.Document(path)
     bank_title, groups = "", []
     g = s = None
@@ -130,6 +161,15 @@ def parse_bank(path):
             (s["items"] if s is not None else g["items"]).append(t)
         elif not bank_title:
             bank_title = t
+        elif g is not None:      # فقرة عادية داخل مجموعة: نحتفظ بها كتعبير حتى لا يضيع نص
+            (s["items"] if s is not None else g["items"]).append(t)
+    if warnings is not None:
+        cap = [bank_title] if bank_title else []
+        for g in groups:
+            cap += [g["title"]] + g["items"]
+            for sb in g["subs"]:
+                cap += [sb["title"]] + sb["items"]
+        check_lost(path, d, cap, warnings)
     groups = [x for x in groups if x["items"] or any(sb["items"] for sb in x["subs"])]
     return bank_title, groups
 
@@ -184,9 +224,9 @@ def build():
                 typ, kind, layout = classify_file(f.stem)
                 try:
                     if typ == "bank":
-                        bank_title, bank = parse_bank(f)
+                        bank_title, bank = parse_bank(f, warnings)
                     else:
-                        rep = parse_report(f)
+                        rep = parse_report(f, warnings)
                         label_override = (sm.get("variant_labels") or {}).get(f.stem)
                         label = label_override or kind.capitalize() + (f" · {layout}" if layout else "")
                         if kind == "other" and not label_override:
@@ -250,6 +290,9 @@ def build():
     print(f"تم: {len(studies_index)} دراسة، {n_var} نموذج، {n_items} تعبير في البنوك")
     for w in warnings:
         print("تنبيه:", w)
+    rep = [f"Build report {index['version']}", f"{len(studies_index)} studies, {n_var} variants, {n_items} phrases", ""]
+    rep += ([f"WARNING: {w}" for w in warnings] or ["OK: no lost text, no warnings."])
+    (DATA / "build-report.txt").write_text("\n".join(rep) + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

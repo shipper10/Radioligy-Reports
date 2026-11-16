@@ -19,7 +19,7 @@ export function toast(msg, undo, ms) {
   const t = $('#toast'); t.innerHTML = '';
   const sp = document.createElement('span'); sp.textContent = msg; t.appendChild(sp);
   if (undo) {
-    const b = document.createElement('button'); b.type = 'button'; b.textContent = 'تراجع';
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Undo';
     b.onclick = () => { t.hidden = true; undo(); }; t.appendChild(b);
   }
   t.hidden = false; clearTimeout(toastT);
@@ -31,7 +31,7 @@ let sheetClose = null;
 export function closeSheet() { const s = $('#sheet'); s.hidden = true; s.innerHTML = ''; const f = sheetClose; sheetClose = null; if (f) f(); }
 export function openSheet(title, bodyHtml, onClose) {
   const s = $('#sheet');
-  s.innerHTML = `<div class="sh-card" role="dialog"><div class="sh-h"><b>${esc(title)}</b><button type="button" data-x aria-label="إغلاق">✕</button></div><div class="sh-b">${bodyHtml}</div></div>`;
+  s.innerHTML = `<div class="sh-card" role="dialog"><div class="sh-h"><b>${esc(title)}</b><button type="button" data-x aria-label="Close">✕</button></div><div class="sh-b">${bodyHtml}</div></div>`;
   s.hidden = false; sheetClose = onClose || null;
   s.onclick = e => { if (e.target === s || e.target.closest('[data-x]')) closeSheet(); };
   return $('.sh-b', s);
@@ -42,7 +42,7 @@ export function choose(title, options, onPick) {
     `<button type="button" class="opt${o.ltr ? ' ltr' : ''}" data-i="${i}"${o.current ? ' aria-current="true"' : ''}>${esc(o.label)}${o.sub ? `<small>${esc(o.sub)}</small>` : ''}</button>`).join(''));
   body.onclick = e => { const b = e.target.closest('[data-i]'); if (!b) return; const o = options[+b.dataset.i]; closeSheet(); onPick(o.value, o); };
 }
-export function confirmBox(title, msg, okText, onOk, cancelText = 'إلغاء') {
+export function confirmBox(title, msg, okText, onOk, cancelText = 'Cancel') {
   const body = openSheet(title, `<div class="hint" style="font-size:14px">${msg}</div><div class="g2"><button class="btn danger" data-ok type="button">${esc(okText)}</button><button class="btn" data-no type="button">${esc(cancelText)}</button></div>`);
   body.onclick = e => { if (e.target.closest('[data-ok]')) { closeSheet(); onOk(); } else if (e.target.closest('[data-no]')) closeSheet(); };
 }

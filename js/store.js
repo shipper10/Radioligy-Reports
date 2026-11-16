@@ -6,11 +6,12 @@ export const lsSet = (k, v) => { try { localStorage.setItem(P + k, JSON.stringif
 export const lsDel = k => { try { localStorage.removeItem(P + k); } catch (e) {} };
 
 export const defaultSettings = () => ({
-  hdr: 'all', ftr: 'all', pn: 'off', pnPos: 'r', pnAr: false, fline: 'auto', zoom: 1,
+  hdr: 'all', ftr: 'all', pn: 'off', pnPos: 'r', fline: 'auto', hline: 'on', zoom: 1,
+  phOn: false, titleLines: true, metaCols: '2', place: 'end', pop: 100, sigDefault: true, sigText: null,
   hideEmpty: true, wmOn: true, wmOp: 8, share: false, xmode: 'one', xq: '2',
   brand: {},                       // تعديلات المستخدم على الهوية (تتغلّب على data/branding.json)
-  sig: {strokes: [], line1: null, line2: null, pen: '#0b1a4a', pw: 2.2, sx: 25, sy: 40, sw: 28},
-  fav: [], ui: {modality: null, group: 'all', fav: false},
+  sig: {strokes: [], pen: '#0b1a4a', pw: 2.2},
+  fav: [], ui: {modality: null, open: []},
 });
 export const defaultBrand = {header: {}, footer: {}, watermark: {}, stamp: {}, signature: {}};
 export let settings = defaultSettings();

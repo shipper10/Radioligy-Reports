@@ -3,10 +3,10 @@ import { $, esc, toast, openSheet, closeSheet, toDataUrl } from './util.js';
 
 function guard(api, go) {
   const n = api.unfilled(); if (!n) return go();
-  const body = openSheet('حقول لم تُعبَّأ', `<div class="hint" style="font-size:14px">يوجد <b>${n}</b> حقل بين [ ] لم يتم تعبئته بعد (تظهر باللون الأصفر). هل تريد المتابعة؟</div><div class="g2"><button class="btn danger" type="button" data-go>متابعة رغم ذلك</button><button class="btn" type="button" data-no>العودة للتعبئة</button></div>`);
+  const body = openSheet('Unfilled fields', `<div class="hint" style="font-size:14px">There are <b>${n}</b> highlighted [ ] fields still unfilled. Continue anyway?</div><div class="g2"><button class="btn danger" type="button" data-go>Continue anyway</button><button class="btn" type="button" data-no>Back to editing</button></div>`);
   body.onclick = e => { if (e.target.closest('[data-go]')) { closeSheet(); go(); } else if (e.target.closest('[data-no]')) closeSheet(); };
 }
-const slug = s => String(s || 'report').replace(/[^\w؀-ۿ]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'report';
+const slug = s => String(s || 'report').replace(/[^\w]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'report';
 const stamp = () => new Date().toISOString().slice(0, 10);
 const nameOf = doc => { const pn = (doc.fields.find(f => /patient/i.test(f.l)) || {}).v; return `${slug(doc.title).slice(0, 40)}_${slug(pn || 'patient')}_${stamp()}`; };
 
@@ -20,12 +20,12 @@ export async function copyText(doc) {
   doc.free.forEach(f => L.push('', f.text));
   const text = L.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   try { await navigator.clipboard.writeText(text); } catch (e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (e2) {} ta.remove(); }
-  toast('تم نسخ نص التقرير');
+  toast('Report text copied');
 }
 async function deliver(files, s) {
   if (s.share && navigator.canShare && navigator.canShare({files})) { try { await navigator.share({files}); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
   files.forEach((f, i) => setTimeout(() => { const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }, i * 350));
-  toast(files.length > 1 ? `جارٍ تنزيل ${files.length} ملفات` : 'تم تنزيل الملف');
+  toast(files.length > 1 ? `Downloading ${files.length} files` : 'File downloaded');
 }
 
 /* ---------- PNG ---------- */
@@ -40,7 +40,7 @@ async function pageToCanvas(pg, q) {
   clone.querySelectorAll('.sig-pad').forEach(p => { p.style.background = 'none'; p.style.outline = '0'; });
   clone.querySelectorAll('.c').forEach(c => c.removeAttribute('contenteditable'));
   clone.style.boxShadow = 'none';
-  const wrap = document.createElementNS('http://www.w3.org/1999/xhtml', 'div'); wrap.setAttribute('style', `width:${w}px;height:${h}px;direction:ltr;--navy:#0f3d5e`);
+  const wrap = document.createElementNS('http://www.w3.org/1999/xhtml', 'div'); wrap.setAttribute('class', document.getElementById('pages').className); wrap.setAttribute('style', `width:${w}px;height:${h}px;direction:ltr;--navy:#0f3d5e;--k:${document.getElementById('pages').style.getPropertyValue('--k') || 1};display:block`);
   const style = document.createElementNS('http://www.w3.org/1999/xhtml', 'style'); style.textContent = cssText.replace(/@media print\s*\{[\s\S]*$/, ''); wrap.appendChild(style); wrap.appendChild(clone);
   const xml = new XMLSerializer().serializeToString(wrap);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%">${xml}</foreignObject></svg>`;
@@ -52,7 +52,7 @@ async function pageToCanvas(pg, q) {
 const toBlob = cv => new Promise(ok => cv.toBlob(ok, 'image/png'));
 export function exportPng(api, {prepOutput, endOutput, pages}, s) {
   guard(api, async () => {
-    toast('جارٍ إنشاء الصورة…', null, 6000); prepOutput();
+    toast('Creating image…', null, 6000); prepOutput();
     try {
       await new Promise(r => setTimeout(r, 120));
       const q = Math.min(3, +s.xq || 2), pgs = pages(), cvs = [];
@@ -65,7 +65,7 @@ export function exportPng(api, {prepOutput, endOutput, pages}, s) {
         files = [new File([await toBlob(all)], nm + '.png', {type: 'image/png'})];
       } else files = await Promise.all(cvs.map(async (c, i) => new File([await toBlob(c)], cvs.length > 1 ? `${nm}_p${i + 1}.png` : nm + '.png', {type: 'image/png'})));
       await deliver(files, s);
-    } catch (e) { console.error(e); toast('تعذّر إنشاء الصورة على هذا المتصفح – استخدم الطباعة / PDF'); }
+    } catch (e) { console.error(e); toast('Could not create the image in this browser – use Print / PDF'); }
     finally { endOutput(); }
   });
 }
@@ -77,18 +77,17 @@ const AR = /[؀-ۿ]/;
 const dataMime = d => (/^data:image\/(png|jpe?g|gif|bmp)/i.exec(d) || [])[1] || 'png';
 const dataBytes = d => Uint8Array.from(atob(d.split(',')[1]), c => c.charCodeAt(0));
 function loadImg(src) { return new Promise(ok => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => ok(null); i.src = src; }); }
-async function sigPng(sig) {
+async function padPng(pad) {
   const W = 480, H = Math.round(W * 24 / 62), cv = document.createElement('canvas'); cv.width = W; cv.height = H; const ctx = cv.getContext('2d');
-  if (sig.image) { const im = await loadImg(await toDataUrl(sig.image)); if (im) ctx.drawImage(im, 0, 0, W, H); }
-  ctx.strokeStyle = sig.pen; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = sig.pw * W / 234;
-  sig.strokes.forEach(s => { if (!s.length) return; ctx.beginPath(); ctx.moveTo(s[0][0] * W, s[0][1] * H); s.forEach(p => ctx.lineTo(p[0] * W, p[1] * H)); ctx.stroke(); });
-  if (sig.stamp) { const im = await loadImg(await toDataUrl(sig.stamp)); if (im) { const sw = sig.sw / 62 * W, sh = sw * im.height / im.width; ctx.globalAlpha = .93; ctx.drawImage(im, sig.sx / 100 * W - sw / 2, sig.sy / 100 * H - sh / 2, sw, sh); } }
-  const has = sig.strokes.length || sig.stamp || sig.image; if (!has) return null;
-  return {data: dataBytes(cv.toDataURL('image/png')), w: 234, h: Math.round(234 * H / W)};
+  if (pad.image) { const im = await loadImg(await toDataUrl(pad.image)); if (im) ctx.drawImage(im, 0, 0, W, H); }
+  ctx.strokeStyle = pad.pen; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = pad.pw * W / 234;
+  pad.strokes.forEach(s => { if (!s.length) return; ctx.beginPath(); ctx.moveTo(s[0][0] * W, s[0][1] * H); s.forEach(p => ctx.lineTo(p[0] * W, p[1] * H)); ctx.stroke(); });
+  if (!pad.strokes.length && !pad.image) return null;
+  return dataBytes(cv.toDataURL('image/png'));
 }
 export function exportDocx(api, readDoc, s) {
   guard(api, async () => {
-    toast('جارٍ إنشاء ملف Word…', null, 5000);
+    toast('Creating Word file…', null, 5000);
     try {
       const X = await loadDocx(), doc = readDoc(s.hideEmpty), b = doc.brand;
       const {Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, BorderStyle, AlignmentType, ImageRun, Header, Footer, PageNumber, LevelFormat} = X;
@@ -103,28 +102,30 @@ export function exportDocx(api, readDoc, s) {
       };
       const bidi = t => AR.test(t) ? {bidirectional: true} : {};
       const kids = [];
-      // بيانات المريض
-      const fl = doc.fields, rows = [];
-      for (let i = 0; i < fl.length; i += 2) rows.push(new TableRow({children: [fl[i], fl[i + 1]].map(f => new TableCell({borders: noB, width: {size: 4900, type: WidthType.DXA}, margins: {top: 30, bottom: 30},
-        children: [new Paragraph({children: f ? [new TextRun({text: f.l + ': ', bold: true, font: F, size: 20}), new TextRun({text: f.v, font: F, size: 20, rightToLeft: AR.test(f.v)})] : []})]}))}));
-      if (rows.length) kids.push(new Table({rows, width: {size: 9800, type: WidthType.DXA}, columnWidths: [4900, 4900], borders: noB}));
-      kids.push(new Paragraph({alignment: AlignmentType.CENTER, spacing: {before: 160, after: 120}, children: [new TextRun({text: doc.title, bold: true, font: F, size: 24})]}));
+      // patient fields
+      const K = doc.fitK || 1, Z = n => Math.max(12, Math.round(n * K));
+      const fl = doc.fields, one = String(doc.settings.metaCols) === '1', per = one ? 1 : 2, cw = one ? 9800 : 4900, rows = [];
+      for (let i = 0; i < fl.length; i += per) rows.push(new TableRow({children: fl.slice(i, i + per).concat(per === 2 && fl.length - i < 2 ? [null] : []).map(f => new TableCell({borders: noB, width: {size: cw, type: WidthType.DXA}, margins: {top: 30, bottom: 30},
+        children: [new Paragraph({children: f ? [new TextRun({text: f.l + ': ', bold: true, font: F, size: Z(20)}), new TextRun({text: f.v, font: F, size: Z(20), rightToLeft: AR.test(f.v)})] : []})]}))}));
+      if (rows.length) kids.push(new Table({rows, width: {size: 9800, type: WidthType.DXA}, columnWidths: one ? [9800] : [4900, 4900], borders: noB}));
+      const tl = doc.settings.titleLines ? {top: {style: BorderStyle.SINGLE, size: 8, color: '000000', space: 4}, bottom: {style: BorderStyle.SINGLE, size: 8, color: '000000', space: 4}} : undefined;
+      kids.push(new Paragraph({alignment: AlignmentType.CENTER, spacing: {before: 160, after: 120}, border: tl, children: [new TextRun({text: doc.title, bold: true, font: F, size: Z(24)})]}));
       doc.items.forEach(it => {
-        if (it.t === 'h1') kids.push(new Paragraph({keepNext: true, spacing: {before: 200, after: 40}, ...bidi(it.text), children: [new TextRun({text: '▪ ' + it.text, bold: true, font: F, size: 21})]}));
-        else if (it.t === 'h2') kids.push(new Paragraph({keepNext: true, indent: {left: 280}, spacing: {before: 120, after: 30}, ...bidi(it.text), children: [new TextRun({text: '▪ ' + it.text, bold: true, font: F, size: 20})]}));
-        else if (it.t === 'li') kids.push(new Paragraph({numbering: {reference: 'bul', level: 0}, spacing: {before: 20, after: 20}, ...bidi(it.text), children: runs(it.html)}));
-        else kids.push(new Paragraph({spacing: {before: 40, after: 40}, ...bidi(it.text), children: runs(it.html)}));
+        if (it.t === 'h1') kids.push(new Paragraph({keepNext: true, spacing: {before: 200, after: 40}, ...bidi(it.text), children: [new TextRun({text: '▪ ' + it.text, bold: true, font: F, size: Z(21)})]}));
+        else if (it.t === 'h2') kids.push(new Paragraph({keepNext: true, indent: {left: 280}, spacing: {before: 120, after: 30}, ...bidi(it.text), children: [new TextRun({text: '▪ ' + it.text, bold: true, font: F, size: Z(20)})]}));
+        else if (it.t === 'li') kids.push(new Paragraph({numbering: {reference: 'bul', level: 0}, spacing: {before: 20, after: 20}, ...bidi(it.text), children: runs(it.html, {size: Z(20)})}));
+        else kids.push(new Paragraph({spacing: {before: 40, after: 40}, ...bidi(it.text), children: runs(it.html, {size: Z(20)})}));
       });
-      doc.free.sort((a, c) => a.p - c.p || a.y - c.y).forEach(f => kids.push(new Paragraph({spacing: {before: 120, after: 40}, ...bidi(f.text), children: runs(f.html)})));
-      // التوقيع
-      if (doc.sig) {
-        const g = doc.sig, c = (g.mode === 'free' ? g.x + 17 : 0), al = g.mode !== 'free' ? AlignmentType.LEFT : c < 38 ? AlignmentType.LEFT : c > 62 ? AlignmentType.RIGHT : AlignmentType.CENTER;
-        kids.push(new Paragraph({alignment: al, spacing: {before: 360, after: 0}, keepNext: true, children: [new TextRun({text: g.line1, bold: true, font: F, size: 20})]}));
-        const im = await sigPng(g);
-        if (im) kids.push(new Paragraph({alignment: al, keepNext: true, children: [new ImageRun({type: 'png', data: im.data, transformation: {width: im.w, height: im.h}})]}));
-        kids.push(new Paragraph({alignment: al, children: [new TextRun({text: g.line2, font: F, size: 20})]}));
+      // free blocks (text / signature text / drawing box / stamp): in reading order, aligned by horizontal position
+      const padBytes = doc.free.some(f => f.t === 'pad') ? await padPng(doc.pad) : null;
+      let stampD = null; if (doc.stamp && doc.free.some(f => f.t === 'stamp')) { stampD = await toDataUrl(doc.stamp); }
+      for (const f of doc.free) {
+        const c = f.x + f.w / 2, al = c < 38 ? AlignmentType.LEFT : c > 62 ? AlignmentType.RIGHT : AlignmentType.CENTER, pxw = Math.round(f.w / 100 * 210 * 3.78);
+        if (f.t === 'text') kids.push(new Paragraph({alignment: al, spacing: {before: 160, after: 40}, keepNext: false, ...bidi(f.text), children: runs(f.html, {size: Z(20)})}));
+        else if (f.t === 'pad' && padBytes) kids.push(new Paragraph({alignment: al, spacing: {before: 60, after: 60}, children: [new ImageRun({type: 'png', data: padBytes, transformation: {width: pxw, height: Math.round(pxw * 24 / 62)}})]}));
+        else if (f.t === 'stamp' && stampD) { const im = await loadImg(stampD), t = dataMime(stampD); if (im) kids.push(new Paragraph({alignment: al, spacing: {before: 60, after: 60}, children: [new ImageRun({type: t === 'jpeg' ? 'jpg' : t, data: dataBytes(stampD), transformation: {width: pxw, height: Math.round(pxw * im.height / im.width)}})]})); }
       }
-      // الترويسة والتذييل
+      // header / footer
       const h = b.header || {}, ft = b.footer || {}, st = doc.settings, hasHdr = (h.line1 || h.line2 || h.line3 || h.logoLeft || h.logoRight) && st.hdr !== 'none';
       const logo = async src => { if (!src) return []; const d = await toDataUrl(src), im = await loadImg(d); if (!im) return []; const hh = 56, ww = Math.min(110, Math.round(im.width * hh / im.height)); return [new ImageRun({type: dataMime(d) === 'jpg' || dataMime(d) === 'jpeg' ? 'jpg' : dataMime(d), data: dataBytes(d), transformation: {width: ww, height: Math.round(ww * im.height / im.width)}})]; };
       const mk = (txt, bold, size) => new Paragraph({alignment: AlignmentType.CENTER, children: [new TextRun({text: txt, bold, font: F, size})]});
@@ -135,7 +136,7 @@ export function exportDocx(api, readDoc, s) {
           new TableCell({borders: noB, width: {size: 1800, type: WidthType.DXA}, children: [new Paragraph({children: await logo(h.logoLeft)})]}),
           new TableCell({borders: noB, width: {size: 6200, type: WidthType.DXA}, children: mid.length ? mid : [new Paragraph({})]}),
           new TableCell({borders: noB, width: {size: 1800, type: WidthType.DXA}, children: [new Paragraph({alignment: AlignmentType.RIGHT, children: await logo(h.logoRight)})]})]})]}),
-          new Paragraph({border: {bottom: {style: BorderStyle.SINGLE, size: 12, color: '0F3D5E', space: 1}}, children: []})]});
+          ...(st.hline !== 'off' ? [new Paragraph({border: {bottom: {style: BorderStyle.SINGLE, size: 12, color: '0F3D5E', space: 1}}, children: []})] : [])]});
       }
       const fch = [];
       if ((ft.line1 || ft.line2) && st.ftr !== 'none') { if (ft.line1) fch.push(mk(ft.line1, true, 20)); if (ft.line2) fch.push(mk(ft.line2, false, 20)); }
@@ -150,6 +151,6 @@ export function exportDocx(api, readDoc, s) {
         numbering: {config: [{reference: 'bul', levels: [{level: 0, format: LevelFormat.BULLET, text: '•', alignment: AlignmentType.LEFT, style: {paragraph: {indent: {left: 360, hanging: 260}}}}]}]}, sections: [section]});
       const blob = await Packer.toBlob(wd);
       await deliver([new File([blob], nameOf(doc) + '.docx', {type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'})], s);
-    } catch (e) { console.error(e); toast('تعذّر إنشاء ملف Word: ' + (e.message || '')); }
+    } catch (e) { console.error(e); toast('Could not create Word file: ' + (e.message || '')); }
   });
 }

@@ -1,4 +1,4 @@
-// المحرر: صفحات A4 حقيقية، حقول، بنود، توقيع متحرك، نص حر، لوحة التحكم
+// Editor: real A4 pages, patient fields, items, free-floating blocks (text / signature / stamp), control panel
 import { $, $$, esc, clamp, r1, uid, toast, choose, confirmBox, openSheet, closeSheet, readImg, debounce } from './util.js';
 import * as St from './store.js';
 import * as Data from './data.js';
@@ -6,23 +6,23 @@ import { initBank, openBank, closeBank, bankOpen } from './bank.js';
 import * as Exp from './export.js';
 
 const VAR_DESC = {
-  template: 'قالب جاهز: قيم طبيعية مكتوبة مسبقاً وحقول [ ] للتعديل (الأسرع)',
-  blank: 'فارغ: العناوين فقط وتكتب كل شيء بنفسك',
-  normal: 'مثال طبيعي كامل (دراسة سليمة) جاهز',
-  limited: 'حالة محدودة / غير حاسمة',
-  other: 'نسخة أخرى',
+  template: 'Ready template: normal values pre-written, with [ ] fields to edit (fastest)',
+  blank: 'Blank: headings only, you write everything',
+  normal: 'Complete normal study example',
+  limited: 'Limited / non-diagnostic case',
+  other: 'Other version',
 };
-const KIND_AR = {template: 'قالب', blank: 'فارغ', normal: 'طبيعي', limited: 'محدود', other: 'نسخة'};
+const KIND_EN = {template: 'Template', blank: 'Blank', normal: 'Normal', limited: 'Limited', other: 'Version'};
 const STD_FIELDS = ['Patient Name', 'Date', 'Age / Sex', 'Referred By'];
 
 /* ===== حالة المحرر ===== */
-let D = null, study = null, sigEl = null, busy = false, tbd = null, lastW = 0;
+let D = null, study = null, busy = false, tbd = null, lastW = 0;
 const cur = {atom: null};
 const PAGES = $('#pages'), stage = $('#stage'), scaler = $('#scaler'), panel = $('#panel');
 const S = () => St.settings;
 const pages = () => $$('.page', PAGES);
 const atomsList = () => $$('.pg-body > .atom', PAGES);
-const docAtoms = () => atomsList().filter(a => a.dataset.k !== 'sig');
+const docAtoms = () => atomsList();
 const isOpen = () => !$('#editor').hidden;
 
 /* ===== بناء عناصر التقرير ===== */
@@ -30,13 +30,13 @@ const phHtml = t => esc(t).replace(/\[[^\]\n]{1,300}\]|_{3,}/g, m => `<span clas
 const ce = (cls, html, extra = '') => `<div class="c ${cls}" contenteditable="true" ${extra}>${html}</div>`;
 const fmtDate = () => { const d = new Date(); return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`; };
 const A = {
-  meta: (fields, vals = {}) => `<div class="atom a-meta" data-k="meta"><div class="meta-grid">${fields.map(f =>
-    `<div class="mf"><b class="ml">${esc(f)}:</b>${ce('mv', esc(vals[f] ?? (/^date$/i.test(f) ? fmtDate() : '')), `dir="auto" data-lbl="${esc(f)}"`)}</div>`).join('')}</div></div>`,
+  meta: (fields, vals = {}) => `<div class="atom a-meta" data-k="meta"><div class="meta-grid">${fields.map(f => A.mf(f, vals[f] ?? (/^date$/i.test(f) ? fmtDate() : ''))).join('')}</div></div>`,
+  mf: (label, val = '') => `<div class="mf">${ce('ml', esc(label), 'data-ph="Label"')}${ce('mv', esc(val), 'dir="auto"')}</div>`,
   title: t => `<div class="atom a-title" data-k="title">${ce('', phHtml(t))}</div>`,
   h1: t => `<div class="atom a-h1" data-k="h1">${ce('', phHtml(t))}</div>`,
   h2: t => `<div class="atom a-h2" data-k="h2">${ce('', phHtml(t))}</div>`,
-  li: (html = '') => `<div class="atom a-li" data-k="li">${ce('', html, 'data-ph="اكتب هنا"')}</div>`,
-  p: (html = '') => `<div class="atom a-p" data-k="p">${ce('', html, 'data-ph="اكتب هنا"')}</div>`,
+  li: (html = '') => `<div class="atom a-li" data-k="li">${ce('', html, 'data-ph="Type here"')}</div>`,
+  p: (html = '') => `<div class="atom a-p" data-k="p">${ce('', html, 'data-ph="Type here"')}</div>`,
 };
 export function atomsFromVariant(v, vals) {
   const out = [A.meta(v.fields || STD_FIELDS, vals), A.title(v.title)];
@@ -46,7 +46,7 @@ export function atomsFromVariant(v, vals) {
 export function makeDraft(st, variantId) {
   const v = st.variants.find(x => x.id === variantId) || st.variants[0];
   return {id: St.newDraftId(), studyId: st.id, variantId: v.id, title: st.title, created: Date.now(), edited: false,
-    atoms: atomsFromVariant(v), tb: [], sig: {mode: 'auto', on: true, p: 0, x: 52, y: 80, w: 34}, patient: ''};
+    atoms: atomsFromVariant(v), tb: [], sigInit: false, fit: false, patient: ''};
 }
 const newNode = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
@@ -126,21 +126,34 @@ function restoreSel(st) {
   while ((n = w.nextNode())) { const l = n.nodeValue.length; if (!a && acc + l >= st.so) a = [n, st.so - acc]; if (!b && acc + l >= st.eo) { b = [n, st.eo - acc]; break; } acc += l; }
   if (a) { const r = document.createRange(); r.setStart(...a); r.setEnd(...(b || a)); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
 }
+const setK = k => PAGES.style.setProperty('--k', String(k));
 function reflow() {
   if (busy || !D) return; busy = true;
   const sel = saveSel();
   try {
     if (!pages().length) PAGES.appendChild(makePage());
     ensurePages(1);
-    let atoms = atomsList();
-    if (sigEl && sigEl.classList.contains('a-sig') && sigEl.isConnected) atoms = atoms.filter(a => a !== sigEl).concat(sigEl);
+    const atoms = atomsList();
     flags(atoms);
-    let N = Math.max(1, pages().length), res = null;
-    for (let it = 0; it < 5; it++) {
-      ensurePages(N); applyPageVis(N);
-      const hs = atoms.map(a => a.offsetHeight);
-      res = assign(atoms, hs);
-      if (res.count === N) break; N = res.count;
+    const run = () => {
+      let N = Math.max(1, pages().length), res = null;
+      for (let it = 0; it < 5; it++) {
+        ensurePages(N); applyPageVis(N);
+        const hs = atoms.map(a => a.offsetHeight);
+        res = assign(atoms, hs); res.used = hs.reduce((a, b) => a + b, 0);
+        if (res.count === N) break; N = res.count;
+      }
+      return res;
+    };
+    setK(1); let res = run();
+    if (D.fit && res.count > 1) {          // ملاءمة صفحة واحدة: تصغير الخط تدريجياً
+      let k = 1;
+      while (res.count > 1 && k > 0.46) { k = Math.round((k - 0.03) * 100) / 100; setK(k); res = run(); }
+    }
+    if (D.fit && res.count === 1) {        // اترك مكاناً للتوقيع (نص التوقيع) أسفل المحتوى
+      const need = () => Math.max(0, ...$$('.float[data-sg]', PAGES).map(f => f.offsetHeight + 6));
+      let k = parseFloat(PAGES.style.getPropertyValue('--k')) || 1;
+      while (res.count === 1 && res.used + need() > capOf(0) && k > 0.46) { k = Math.round((k - 0.03) * 100) / 100; setK(k); res = run(); }
     }
     ensurePages(res.count); applyPageVis(res.count);
     const pgs = pages();
@@ -158,122 +171,109 @@ function scaleView() {
   const avail = document.documentElement.clientWidth - 12, fit = Math.min(1, avail / stage.offsetWidth), k = fit * (S().zoom || 1);
   stage.style.transform = `scale(${k})`; stage.dataset.k = k;
   scaler.style.width = Math.round(stage.offsetWidth * k) + 'px'; scaler.style.height = Math.round(stage.offsetHeight * k) + 'px';
-  $$('.sig-pad').forEach(fitPad);
+  $$('.sig-pad', PAGES).forEach(fitPad);
 }
 
-/* ===== التوقيع (لوحة رسم + ختم) ===== */
-const sigLines = () => { const b = St.brand().signature || {}, g = S().sig; return [g.line1 ?? b.line1 ?? 'Best Regards,', g.line2 ?? b.line2 ?? 'Dr. ..............................................']; };
+/* ===== العناصر الحرة: نص / توقيع (نص) / لوحة توقيع / ختم — كلها تُحرَّك وتُحذف وتُضاف بحرية ===== */
+const defaultSigHtml = () => { const b = St.brand().signature || {}; return S().sigText ?? `${esc(b.line1 || 'Best Regards,')}<div>${esc(b.line2 || 'Dr. ..............................................')}</div>`; };
 const stampSrc = () => (St.brand().stamp || {}).image || '';
-function buildSig() {
-  const [l1, l2] = sigLines(), b = St.brand().signature || {};
-  const el = newNode(`<div class="sigbox atom a-sig" data-k="sig" id="sigBox">
-    <div class="fl-bar no-print" contenteditable="false"><button type="button" data-tb="mv" aria-label="تحريك التوقيع">✥ تحريك</button><button type="button" data-tb="rs" aria-label="حجم">↔</button><button type="button" data-act="sigauto">⇩ تلقائي</button></div>
-    ${ce('sg-l1', esc(l1))}
-    <div class="sig-pad no-stamp" data-pad>${b.image ? `<img src="${esc(b.image)}" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;z-index:0">` : ''}<canvas></canvas><div class="pad-hint">وقّع هنا</div>
-      <div class="pad-tools no-print"><button type="button" data-act="pundo">↶</button><button type="button" data-act="pclr">مسح</button></div>
-      <img class="stamp" alt="" draggable="false"></div>
-    ${ce('sg-l2', esc(l2))}</div>`);
-  return el;
-}
-function ensureSig() {
-  const want = D.sig.on !== false;
-  if (!want) { if (sigEl) { sigEl.remove(); } return; }
-  if (!sigEl) { sigEl = buildSig(); initPad(); }
-  refreshStamp();
-  if (sigEl.isConnected) return;
-  const sg = D.sig;
-  if (sg.mode === 'free') {
-    const pg = pages()[Math.min(sg.p || 0, pages().length - 1)] || pages()[0];
-    sigEl.classList.remove('atom', 'a-sig'); delete sigEl.dataset.k; sigEl.classList.add('float', 'free');
-    sigEl.style.cssText = `left:${sg.x}%;top:${sg.y}%;width:${sg.w}%`; pg.appendChild(sigEl);
-  } else {
-    sigEl.classList.add('atom', 'a-sig'); sigEl.classList.remove('float', 'free'); sigEl.dataset.k = 'sig'; sigEl.removeAttribute('style');
-    $('.pg-body', pages().at(-1)).appendChild(sigEl);
-  }
-  $$('.sig-pad').forEach(fitPad);
-}
-function sigToFree() {
-  if (!sigEl || sigEl.classList.contains('free')) return;
-  const r = sigEl.getBoundingClientRect(), pgs = pages();
-  const pg = pgs.find(p => { const pr = p.getBoundingClientRect(); return r.top >= pr.top - 2 && r.top < pr.bottom; }) || pgs.at(-1), pr = pg.getBoundingClientRect();
-  sigEl.classList.remove('atom', 'a-sig'); delete sigEl.dataset.k; sigEl.classList.add('float', 'free');
-  sigEl.style.cssText = `left:${r1((r.left - pr.left) / pr.width * 100)}%;top:${r1((r.top - pr.top) / pr.height * 100)}%;width:${r1(r.width / pr.width * 100)}%`;
-  pg.appendChild(sigEl); D.sig.mode = 'free'; reflow(); touch();
-}
-function sigToAuto() {
-  if (!sigEl) return; D.sig.mode = 'auto'; sigEl.classList.remove('float', 'free'); sigEl.classList.add('atom', 'a-sig'); sigEl.dataset.k = 'sig'; sigEl.removeAttribute('style');
-  $('.pg-body', pages().at(-1)).appendChild(sigEl); reflow(); touch(); toast('عاد التوقيع إلى أسفل الصفحة الأخيرة');
-}
-function sigState() {
-  if (!sigEl || !sigEl.classList.contains('free')) return {...D.sig, mode: sigEl && !sigEl.classList.contains('free') ? 'auto' : D.sig.mode};
-  const pg = sigEl.closest('.page');
-  return {mode: 'free', on: D.sig.on !== false, p: pages().indexOf(pg), x: parseFloat(sigEl.style.left), y: parseFloat(sigEl.style.top), w: parseFloat(sigEl.style.width)};
-}
-function refreshStamp() {
-  if (!sigEl) return; const src = stampSrc(), pad = $('.sig-pad', sigEl), im = $('.stamp', pad), g = S().sig;
-  pad.classList.toggle('no-stamp', !src); if (src) im.src = src;
-  im.style.left = g.sx + '%'; im.style.top = g.sy + '%'; im.style.width = g.sw + 'mm';
-}
-// --- رسم التوقيع ---
-let drawing = null;
-const strokes = () => S().sig.strokes;
-function fitPad() {
-  if (!sigEl) return; const pad = $('.sig-pad', sigEl), cv = $('canvas', pad); if (!pad.clientWidth) return;
-  const k = Math.min(3, (parseFloat(stage.dataset.k) || 1) * Math.max(1, devicePixelRatio || 1));
-  const w = Math.round(pad.clientWidth * k), h = Math.round(pad.clientHeight * k);
-  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-  redraw();
-}
-function redraw() {
-  const pad = $('.sig-pad', sigEl), cv = $('canvas', pad), ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
-  ctx.strokeStyle = S().sig.pen; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = S().sig.pw * cv.width / 234;
-  const all = drawing ? [...strokes(), drawing] : strokes();
-  all.forEach(s => { if (!s.length) return; ctx.beginPath(); ctx.moveTo(s[0][0] * cv.width, s[0][1] * cv.height);
-    if (s.length < 3) s.forEach(p => ctx.lineTo(p[0] * cv.width, p[1] * cv.height));
-    else { for (let i = 1; i < s.length - 1; i++) { const mx = (s[i][0] + s[i + 1][0]) / 2 * cv.width, my = (s[i][1] + s[i + 1][1]) / 2 * cv.height; ctx.quadraticCurveTo(s[i][0] * cv.width, s[i][1] * cv.height, mx, my); } const l = s.at(-1); ctx.lineTo(l[0] * cv.width, l[1] * cv.height); }
-    ctx.stroke(); });
-  pad.classList.toggle('has-ink', all.length > 0);
-}
-function initPad() {
-  const pad = $('.sig-pad', sigEl), cv = $('canvas', pad);
-  const pt = e => { const r = cv.getBoundingClientRect(); return [clamp((e.clientX - r.left) / r.width, 0, 1), clamp((e.clientY - r.top) / r.height, 0, 1)]; };
-  cv.addEventListener('pointerdown', e => { e.preventDefault(); cv.setPointerCapture(e.pointerId); drawing = [pt(e)]; redraw(); });
-  cv.addEventListener('pointermove', e => { if (!drawing) return; drawing.push(pt(e)); redraw(); });
-  const end = () => { if (!drawing) return; if (drawing.length === 1) drawing.push([drawing[0][0] + .002, drawing[0][1]]); strokes().push(drawing); drawing = null; redraw(); St.saveSettings(); };
-  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
-  // الختم
-  const im = $('.stamp', pad); let sd = null;
-  im.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); im.setPointerCapture(e.pointerId); sd = true; });
-  im.addEventListener('pointermove', e => { if (!sd) return; const r = pad.getBoundingClientRect(); S().sig.sx = r1(clamp((e.clientX - r.left) / r.width * 100, 0, 100)); S().sig.sy = r1(clamp((e.clientY - r.top) / r.height * 100, 0, 100)); refreshStamp(); });
-  const se = () => { if (sd) { sd = null; St.saveSettings(); } }; im.addEventListener('pointerup', se); im.addEventListener('pointercancel', se);
-  new ResizeObserver(() => fitPad()).observe(pad);
-}
-
-/* ===== العناصر الحرة (نص حر + التوقيع الحر) ===== */
-function createTbox(pg, o) {
-  const d = newNode(`<div class="float tbox" style="left:${o.x}%;top:${o.y}%;width:${o.w}%"><div class="fl-bar no-print" contenteditable="false"><button type="button" data-tb="mv" aria-label="تحريك">✥</button><button type="button" data-tb="rs" aria-label="عرض">↔</button><button type="button" data-act="fdel" aria-label="حذف">✕</button></div>${ce('tb-c', o.html || '', 'data-ph="نص حر…"')}</div>`);
-  setLo(d); pg.appendChild(d); return d;
+const bar = t => `<div class="fl-bar no-print" contenteditable="false"><button type="button" data-tb="mv" aria-label="Move">✥ Move</button><button type="button" data-tb="rs" aria-label="Resize">↔</button><button type="button" data-act="fend" aria-label="Move to end of report">⇩ End</button><button type="button" data-act="fdel" aria-label="Delete">✕</button></div>`;
+const posStyle = o => `left:${o.x}%;top:${o.y}%;width:${o.w}%`;
+function createFloat(pg, o) {
+  const t = o.t || 'text'; let d;
+  if (t === 'pad') d = newNode(`<div class="float padbox" data-t="pad" style="${posStyle(o)}">${bar()}<div class="sig-pad"><canvas></canvas><div class="pad-hint">Sign here</div><div class="pad-tools no-print"><button type="button" data-act="pundo">↶</button><button type="button" data-act="pclr">Clear</button></div></div></div>`);
+  else if (t === 'stamp') d = newNode(`<div class="float stampbox" data-t="stamp" style="${posStyle(o)}">${bar()}<img alt="stamp" draggable="false" src="${esc(stampSrc())}"></div>`);
+  else d = newNode(`<div class="float tbox" data-t="text"${o.sg ? ' data-sg="1"' : ''} style="${posStyle(o)}">${bar()}${ce('tb-c', o.html || '', 'data-ph="Free text…"')}</div>`);
+  setLo(d); pg.appendChild(d);
+  if (t === 'pad') { initPad(d); fitPad(d); }
+  return d;
 }
 const setLo = d => d.classList.toggle('lo', parseFloat(d.style.top) < 7);
-const collectTb = () => pages().flatMap((pg, i) => $$('.tbox', pg).map(d => ({p: i, x: r1(parseFloat(d.style.left)), y: r1(parseFloat(d.style.top)), w: r1(parseFloat(d.style.width)), html: $('.tb-c', d).innerHTML})));
-function addTbox() {
-  const pgs = pages(), mid = innerHeight * .35, pg = pgs.find(p => { const r = p.getBoundingClientRect(); return r.top <= mid && r.bottom >= mid; }) || pgs[0], r = pg.getBoundingClientRect();
-  const d = createTbox(pg, {x: 15, y: clamp((mid - r.top) / r.height * 100, 10, 85), w: 60, html: ''});
-  closePanel(); touch(); $('.tb-c', d).focus();
+const floatData = d => { const t = d.dataset.t || 'text', pg = d.closest('.page');
+  return {t, sg: d.dataset.sg ? 1 : 0, p: pages().indexOf(pg), x: r1(parseFloat(d.style.left)), y: r1(parseFloat(d.style.top)), w: r1(parseFloat(d.style.width)), html: t === 'text' ? $('.tb-c', d).innerHTML : ''}; };
+const collectTb = () => $$('.float', PAGES).map(floatData);
+// أين ينتهي المحتوى؟ (الصفحة + النسبة المئوية للارتفاع)
+function endOfContent() {
+  const last = docAtoms().at(-1), pg = last ? last.closest('.page') : pages().at(-1), pr = pg.getBoundingClientRect();
+  const bottom = last ? last.getBoundingClientRect().bottom : pr.top + pr.height * .1;
+  return {pg, y: clamp(r1((bottom - pr.top) / pr.height * 100 + 1.2), 3, 99)};
+}
+function viewCenter() {
+  const pgs = pages(), mid = innerHeight * .4, pg = pgs.find(p => { const r = p.getBoundingClientRect(); return r.top <= mid && r.bottom >= mid; }) || pgs[0], r = pg.getBoundingClientRect();
+  return {pg, y: clamp(r1((mid - r.top) / r.height * 100), 5, 88)};
+}
+const DEF = {text: {w: 60, x: 8}, sig: {w: 34, x: 6}, pad: {w: 28, x: 44}, stamp: {w: 22, x: 72}};
+function addFloat(kind, auto = false) {       // kind: text | sig | pad | stamp
+  if (kind === 'stamp' && !stampSrc()) { toast('Upload a stamp image first (Sign tab)'); openPanel('sig'); return; }
+  const where = S().place === 'here' ? viewCenter() : endOfContent(), d0 = DEF[kind];
+  const o = {t: kind === 'sig' ? 'text' : kind, sg: kind === 'sig' ? 1 : 0, x: d0.x, y: where.y, w: d0.w, html: kind === 'sig' ? defaultSigHtml() : ''};
+  const d = createFloat(where.pg, o); closePanel(); reflow();
+  let over = 0; if (S().place !== 'here') over = snapEnd(d);
+  if (auto && over > 4) { d.remove(); toast('No room left on the last page for the signature – add it from Add → Signature text and place it where you like.'); return null; }
+  touch(); if (over > 4) toast('Little room left on this page – block placed at the bottom (it may cover the last line). Drag it, or use Page → Fit on one page.');
+  d.classList.add('sel'); if (!auto) d.scrollIntoView({block: 'center', behavior: 'smooth'});
+  if (kind === 'text') $('.tb-c', d).focus();
+  return d;
+}
+// يضع الصندوق تحت آخر سطر مباشرة؛ وإن لم تكف المساحة يُثبَّت أسفل الصفحة (قد يغطي آخر سطر بقدر بسيط) بدل القفز لصفحة جديدة
+function snapEnd(d) {
+  const e = endOfContent(); e.pg.appendChild(d);
+  const hPct = d.offsetHeight / (e.pg.offsetHeight || 1) * 100, maxY = 99 - hPct, over = e.y - maxY;
+  d.style.top = r1(Math.max(2, Math.min(e.y, maxY))) + '%'; setLo(d);
+  return over > 0 ? over * (e.pg.offsetHeight || 1) / 100 : 0;      // px of overlap with content
+}
+function floatToEnd(d) {
+  const over = snapEnd(d); touch();
+  if (over > 4) toast('Little room left on this page – block placed at the bottom (it may cover the last line). Drag it, or use Page → Fit on one page.');
 }
 function delFloat(d) {
-  const pg = d.parentElement, o = {x: parseFloat(d.style.left), y: parseFloat(d.style.top), w: parseFloat(d.style.width), html: $('.tb-c', d).innerHTML};
-  d.remove(); touch(); toast('تم حذف صندوق النص', () => { createTbox(pg.isConnected ? pg : pages()[0], o); touch(); });
+  const o = floatData(d), pg = d.parentElement; d.remove(); touch();
+  toast('Deleted', () => { createFloat(pg.isConnected ? pg : pages()[0], o); touch(); });
 }
+// --- رسم التوقيع (الخطوط مخزّنة عالمياً بنسب 0..1 وتظهر في كل لوحات التوقيع) ---
+let drawing = null;
+const strokes = () => S().sig.strokes;
+function fitPad(root) {
+  const pad = root.classList && root.classList.contains('sig-pad') ? root : $('.sig-pad', root); if (!pad || !pad.clientWidth) return;
+  const cv = $('canvas', pad), k = Math.min(3, (parseFloat(stage.dataset.k) || 1) * Math.max(1, devicePixelRatio || 1));
+  const w = Math.round(pad.clientWidth * k), h = Math.round(pad.clientHeight * k);
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  redraw(pad);
+}
+function redraw(only) {
+  const pads = only ? [only] : $$('.sig-pad', PAGES);
+  pads.forEach(pad => {
+    const cv = $('canvas', pad), ctx = cv.getContext('2d'); ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.strokeStyle = S().sig.pen; ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = S().sig.pw * cv.width / 234;
+    const all = drawing && drawing.pad === pad ? [...strokes(), drawing.pts] : strokes();
+    all.forEach(s => { if (!s.length) return; ctx.beginPath(); ctx.moveTo(s[0][0] * cv.width, s[0][1] * cv.height);
+      if (s.length < 3) s.forEach(p => ctx.lineTo(p[0] * cv.width, p[1] * cv.height));
+      else { for (let i = 1; i < s.length - 1; i++) { const mx = (s[i][0] + s[i + 1][0]) / 2 * cv.width, my = (s[i][1] + s[i + 1][1]) / 2 * cv.height; ctx.quadraticCurveTo(s[i][0] * cv.width, s[i][1] * cv.height, mx, my); } const l = s.at(-1); ctx.lineTo(l[0] * cv.width, l[1] * cv.height); }
+      ctx.stroke(); });
+    pad.classList.toggle('has-ink', all.length > 0);
+  });
+}
+function initPad(box) {
+  const pad = $('.sig-pad', box), cv = $('canvas', pad);
+  const pt = e => { const r = cv.getBoundingClientRect(); return [clamp((e.clientX - r.left) / r.width, 0, 1), clamp((e.clientY - r.top) / r.height, 0, 1)]; };
+  cv.addEventListener('pointerdown', e => { e.preventDefault(); cv.setPointerCapture(e.pointerId); drawing = {pad, pts: [pt(e)]}; });
+  cv.addEventListener('pointermove', e => { if (!drawing || drawing.pad !== pad) return; drawing.pts.push(pt(e)); redraw(pad); });
+  const end = () => { if (!drawing) return; const pts = drawing.pts; drawing = null;
+    if (pts.length >= 3) { strokes().push(pts); St.saveSettings(); redraw(); } else redraw(pad); };   // لمسة قصيرة = تحديد الصندوق فقط
+  cv.addEventListener('pointerup', end); cv.addEventListener('pointercancel', end);
+  new ResizeObserver(() => fitPad(pad)).observe(pad);
+}
+function refreshStamps() { $$('.stampbox img', PAGES).forEach(im => { im.src = stampSrc(); }); }
 document.addEventListener('pointerdown', e => {
   if (!isOpen()) return;
-  const f = e.target.closest && e.target.closest('.float, .a-sig');
-  $$('.float.sel, .a-sig.sel').forEach(x => { if (x !== f) x.classList.remove('sel'); }); if (f) f.classList.add('sel');
-  const b = e.target.closest && e.target.closest('[data-tb]'); if (!b) return;
+  const f = e.target.closest && e.target.closest('.float');
+  $$('.float.sel').forEach(x => { if (x !== f) x.classList.remove('sel'); }); if (f) f.classList.add('sel');
+  let b = e.target.closest && e.target.closest('[data-tb]'), mode = b && b.dataset.tb;
+  if (!b && e.target.closest && e.target.closest('.stampbox img')) mode = 'mv';       // الختم يُسحب باللمس مباشرة
+  if (!mode) return;
   e.preventDefault();
-  const box = b.closest('.float, .a-sig'); if (box.classList.contains('a-sig')) sigToFree();
-  const r = box.getBoundingClientRect();
-  tbd = {box, mode: b.dataset.tb, ox: e.clientX - r.left, oy: e.clientY - r.top, x0: e.clientX, w0: parseFloat(box.style.width)};
+  const box = e.target.closest('.float'), r = box.getBoundingClientRect();
+  tbd = {box, mode, ox: e.clientX - r.left, oy: e.clientY - r.top, x0: e.clientX, w0: parseFloat(box.style.width)};
 }, true);
 document.addEventListener('pointermove', e => {
   if (!tbd) return; e.preventDefault();
@@ -286,7 +286,7 @@ document.addEventListener('pointermove', e => {
     box.style.top = r1(clamp((e.clientY - tbd.oy - r.top) / r.height * 100, 0, 97)) + '%';
   } else {
     const r = pg.getBoundingClientRect();
-    box.style.width = r1(clamp(tbd.w0 + (e.clientX - tbd.x0) / r.width * 100, 14, 100 - parseFloat(box.style.left))) + '%';
+    box.style.width = r1(clamp(tbd.w0 + (e.clientX - tbd.x0) / r.width * 100, 8, 100 - parseFloat(box.style.left))) + '%';
   }
   setLo(box);
 }, {passive: false});
@@ -299,48 +299,48 @@ function touch() { if (!D) return; D.edited = true; clearTimeout(saveT); saveT =
 function save() {
   clearTimeout(saveT); if (!D || !pages().length) return;
   D.atoms = docAtoms().map(a => { const c = a.cloneNode(true); c.classList.remove('sel', 'flash'); c.removeAttribute('data-hide'); return c.outerHTML; });
-  D.tb = collectTb(); D.sig = sigState();
-  const pn = $('.mv[data-lbl="Patient Name"]', PAGES); D.patient = pn ? pn.textContent.trim() : '';
-  if (!St.saveDraft(D)) toast('تعذّر الحفظ: مساحة التخزين ممتلئة. نزّل نسخة احتياطية.');
+  D.tb = collectTb();
+  const pm = $$('.mf', PAGES).find(m => /name/i.test($('.ml', m).textContent)); D.patient = pm ? $('.mv', pm).textContent.trim() : '';
+  if (!St.saveDraft(D)) toast('Could not save: storage is full. Download a backup.');
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden && isOpen()) save(); });
 window.addEventListener('pagehide', () => { if (isOpen()) save(); });
 
 /* ===== تحميل محتوى التقرير ===== */
 function loadAtoms(list) {
-  if (sigEl) sigEl.remove(); $$('.float', PAGES).forEach(f => f.remove());
+  $$('.float', PAGES).forEach(f => f.remove());
   pages().slice(1).forEach(p => p.remove());
   if (!pages().length) PAGES.appendChild(makePage());
   $('.pg-body', pages()[0]).innerHTML = list.join('');
-  ensureSig(); reflow();
+  reflow();
 }
 function restoreFloats() {
-  (D.tb || []).forEach(o => createTbox(pages()[Math.min(o.p || 0, pages().length - 1)], o));
-  if (sigEl && D.sig.mode === 'free' && sigEl.classList.contains('free')) { const pg = pages()[Math.min(D.sig.p || 0, pages().length - 1)]; if (sigEl.parentElement !== pg) pg.appendChild(sigEl); }
+  (D.tb || []).forEach(o => createFloat(pages()[Math.min(Math.max(o.p || 0, 0), pages().length - 1)], o));
 }
-function reload(list) { D.tb = collectTb(); D.sig = sigState(); loadAtoms(list); restoreFloats(); }
+function reload(list) { D.tb = collectTb(); loadAtoms(list); restoreFloats(); }
 const snapshot = () => docAtoms().map(a => a.cloneNode(true).outerHTML);
 
 export async function open(draft, opts = {}) {
   D = draft; study = await Data.loadStudy(D.studyId);
   $('#home').hidden = true; $('#editor').hidden = false; document.body.classList.remove('home-on');
-  PAGES.innerHTML = ''; sigEl = null; brandDirty = true;
-  buildPanel(); closePanel(); closeBank();
+  PAGES.innerHTML = ''; brandDirty = true;
+  buildPanel(); closePanel(); closeBank(); applyOpts();
   $('#abTitle').textContent = study.title; updateBar();
   PAGES.appendChild(makePage());
-  loadAtoms(D.atoms); ensureSig(); reflow(); restoreFloats(); reflow();
+  loadAtoms(D.atoms); restoreFloats(); reflow();
+  if (!D.sigInit) { D.sigInit = true; if (S().sigDefault !== false) { const keep = S().place; S().place = 'end'; addFloat('sig', true); S().place = keep; D.edited = false; } }
   window.scrollTo(0, 0); cur.atom = null; updateCtx();
   initBank(api); if (opts.bank) openBank(study, {query: opts.bank});
 }
 export function close() {
   if (!D) return; save(); clearTimeout(saveT); closePanel(); closeBank();
-  $('#editor').hidden = true; PAGES.innerHTML = ''; sigEl = null; D = null; study = null;
+  $('#editor').hidden = true; PAGES.innerHTML = ''; D = null; study = null;
 }
 export const current = () => D;
 function updateBar() {
   const v = study.variants.find(x => x.id === D.variantId) || study.variants[0];
-  $('#abSub').textContent = (study.title_ar ? study.title_ar + ' · ' : '') + v.label;
-  $('#abVar').textContent = (KIND_AR[v.kind] || 'النسخة') + ' ▾';
+  $('#abSub').textContent = v.label;
+  $('#abVar').textContent = (KIND_EN[v.kind] || 'Version') + ' ▾';
 }
 
 /* ===== تعديل البنود ===== */
@@ -367,23 +367,23 @@ const sectionOf = a => { // المجموعة التابعة للعنوان
   return out;
 };
 function delAtom(a) {
-  if (!a || ['meta', 'title', 'sig'].includes(kind(a))) return toast('هذا العنصر لا يُحذف');
+  if (!a || ['meta', 'title'].includes(kind(a))) return toast('This item cannot be deleted');
   const snap = snapshot(), grp = sectionOf(a), list = docAtoms(), prev = list[list.indexOf(a) - 1], nextA = list[list.indexOf(grp.at(-1)) + 1];
   grp.forEach(x => x.remove()); touch(); reflow();
   const f = prev || nextA; if (f) focusAtom(f);
-  toast(grp.length > 1 ? `حُذف القسم (${grp.length} بنود)` : 'تم الحذف', () => { reload(snap); touch(); });
+  toast(grp.length > 1 ? `Section deleted (${grp.length} items)` : 'Deleted', () => { reload(snap); touch(); });
 }
 function moveAtom(a, dir) {
-  const k = kind(a); if (!a || ['meta', 'title', 'sig'].includes(k)) return;
+  const k = kind(a); if (!a || ['meta', 'title'].includes(k)) return;
   const list = docAtoms(), grp = sectionOf(a), i0 = list.indexOf(grp[0]), i1 = list.indexOf(grp.at(-1));
   let ref;
   if (k === 'li' || k === 'p') ref = dir < 0 ? list[i0 - 1] : list[i1 + 1];
   else {
     const same = x => kind(x) === k;
-    if (dir < 0) { let s = i0 - 1; while (s >= 0 && !same(list[s]) && !(k === 'h2' && kind(list[s]) === 'h1')) s--; if (s < 0 || !same(list[s])) return toast('هذا أول قسم'); ref = list[s]; }
-    else { const n = list[i1 + 1]; if (!n || !same(n)) return toast('هذا آخر قسم'); ref = sectionOf(n).at(-1); }
+    if (dir < 0) { let s = i0 - 1; while (s >= 0 && !same(list[s]) && !(k === 'h2' && kind(list[s]) === 'h1')) s--; if (s < 0 || !same(list[s])) return toast('This is the first section'); ref = list[s]; }
+    else { const n = list[i1 + 1]; if (!n || !same(n)) return toast('This is the last section'); ref = sectionOf(n).at(-1); }
   }
-  if (!ref || ['meta', 'title'].includes(kind(ref))) return toast('لا يمكن النقل أكثر');
+  if (!ref || ['meta', 'title'].includes(kind(ref))) return toast('Cannot move further');
   const ae = document.activeElement;
   if (dir < 0) ref.before(...grp); else ref.after(...grp);
   touch(); reflow(); if (ae && ae.isConnected) { try { ae.focus({preventScroll: true}); } catch (e) {} }
@@ -407,7 +407,7 @@ function phAction(ph) {
   const opts = phOptions(ph.textContent);
   ph.scrollIntoView({block: 'center', behavior: 'smooth'});
   if (!opts) { selectNode(ph); return; }
-  choose('اختر', [...opts.map(o => ({label: o, value: o, ltr: true})), {label: '✎ كتابة يدوية', value: null}], v => {
+  choose('Choose', [...opts.map(o => ({label: o, value: o, ltr: true})), {label: '✎ Type manually', value: null}], v => {
     if (v == null) { selectNode(ph); return; }
     const t = document.createTextNode(v); ph.replaceWith(t);
     const r = document.createRange(); r.setStartAfter(t); r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r);
@@ -415,12 +415,12 @@ function phAction(ph) {
   });
 }
 function nextPh() {
-  const all = $$('.ph', PAGES).filter(p => p.offsetParent !== null); if (!all.length) return toast('لا توجد حقول [ ] متبقية ✓');
+  const all = $$('.ph', PAGES).filter(p => p.offsetParent !== null); if (!all.length) return toast('No [ ] fields left ✓');
   const s = getSelection(); let t = all[0];
   if (s.rangeCount) { const a = s.getRangeAt(0); const f = all.find(p => (p.compareDocumentPosition(a.endContainer) & Node.DOCUMENT_POSITION_PRECEDING) && !p.contains(a.endContainer)); if (f) t = f; }
   phAction(t);
 }
-const unfilled = () => $$('.ph', PAGES).length;
+const unfilled = () => S().phOn ? $$('.ph', PAGES).length : 0;
 
 // --- لوحة المفاتيح ---
 PAGES.addEventListener('beforeinput', e => {
@@ -435,7 +435,7 @@ PAGES.addEventListener('beforeinput', e => {
       const frag = tail.extractContents(), tmp = document.createElement('div'); tmp.appendChild(frag);
       const n = newNode(A[k](tmp.innerHTML)); atom.after(n); touch(); reflow(); focusAtom(n, false);
     } else if (k === 'h1' || k === 'h2' || k === 'title') { const n = newNode(A.li('')); atom.after(n); touch(); reflow(); focusAtom(n); }
-    else if (k === 'meta') { const all = $$('.mv', atom), i = all.indexOf(c); const nx = all[i + 1]; if (nx) nx.focus(); else { const nxa = docAtoms()[docAtoms().indexOf(atom) + 2]; if (nxa) focusAtom(nxa); } }
+    else if (k === 'meta') { const all = $$('.c', atom), i = all.indexOf(c); const nx = all[i + 1]; if (nx) nx.focus(); else { const nxa = docAtoms()[docAtoms().indexOf(atom) + 2]; if (nxa) focusAtom(nxa); } }
   } else if (e.inputType === 'deleteContentBackward' && (k === 'li' || k === 'p')) {
     const s = getSelection(); if (!s.rangeCount || !s.getRangeAt(0).collapsed) return;
     const r = s.getRangeAt(0), pre = document.createRange(); pre.selectNodeContents(c); pre.setEnd(r.startContainer, r.startOffset);
@@ -463,24 +463,25 @@ PAGES.addEventListener('paste', e => {
 });
 PAGES.addEventListener('input', e => { fixPh(e.target); touch(); schedReflow();
   const c = e.target.closest && e.target.closest('.c');
-  if (c && c.matches('.sg-l1,.sg-l2')) { S().sig[c.matches('.sg-l1') ? 'line1' : 'line2'] = c.textContent; St.saveSettings(); }
+  if (c && c.matches('.tb-c') && c.closest('[data-sg]')) { S().sigText = c.innerHTML; St.saveSettings(); }   // last signature wording is reused in new reports
 });
 PAGES.addEventListener('click', e => {
-  const ph = e.target.closest && e.target.closest('.ph'); if (ph) { phAction(ph); return; }
+  const ph = e.target.closest && e.target.closest('.ph'); if (ph && S().phOn) { phAction(ph); return; }
   const b = e.target.closest && e.target.closest('[data-act]'); if (!b) return;
   const a = b.dataset.act;
-  if (a === 'fdel') delFloat(b.closest('.float')); else if (a === 'sigauto') sigToAuto();
+  if (a === 'fdel') delFloat(b.closest('.float')); else if (a === 'fend') floatToEnd(b.closest('.float'));
   else if (a === 'pundo') { strokes().pop(); redraw(); St.saveSettings(); } else if (a === 'pclr') { S().sig.strokes = []; redraw(); St.saveSettings(); }
 });
 document.addEventListener('focusin', e => {
   if (!isOpen()) return;
-  const a = atomOf(e.target); if (a) cur.atom = a; else if (e.target.closest && e.target.closest('.float, .a-sig')) cur.atom = null;
+  const a = atomOf(e.target); if (a) cur.atom = a; else if (e.target.closest && e.target.closest('.float')) cur.atom = null;
   setTimeout(updateCtx, 0);
 });
 document.addEventListener('focusout', () => { if (isOpen()) setTimeout(updateCtx, 80); });
 function updateCtx() {
-  const ae = document.activeElement, inBody = !!(ae && ae.isContentEditable && atomOf(ae)) && kind(atomOf(ae)) !== 'sig';
-  const k = cur.atom && kind(cur.atom), movable = !['meta', 'title', 'sig', undefined, null].includes(k);
+  const ae = document.activeElement, inBody = !!(ae && ae.isContentEditable && atomOf(ae));
+  const k = cur.atom && kind(cur.atom), movable = !['meta', 'title', undefined, null].includes(k);
+  $('[data-do=next]').hidden = !S().phOn;
   $('[data-do=up]').disabled = $('[data-do=down]').disabled = $('[data-do=del]').disabled = !movable;
   $('#ctxbar').hidden = !(inBody && !panel.classList.contains('open') && !bankOpen());
 }
@@ -517,22 +518,22 @@ function insertPhrase(text, k, mode = 'add') {
     }
   }
   cur.atom = node; touch(); reflow(); flashAtom(node);
-  const where = useSection ? $('.c', useSection).textContent.replace(/[:：]/g, '') : 'الموضع الحالي';
-  toast('تمت الإضافة ← ' + where);
+  const where = useSection ? $('.c', useSection).textContent.replace(/[:：]/g, '') : 'current position';
+  toast('Added → ' + where);
 }
 function applyCase(g) {
   const parts = {};
   g.subs.forEach(s => { if (s.kind && s.items.length) parts[s.kind] = s.items; });
-  if (!Object.keys(parts).length) { toast('هذه المجموعة عبارات منفصلة – اضغط على أي عبارة لإدراجها'); return false; }
+  if (!Object.keys(parts).length) { toast('These are separate phrases – tap any phrase to insert it'); return false; }
   const snap = snapshot(); let done = 0;
   for (const k of ['indication', 'technique', 'findings', 'impression']) {
     if (!parts[k]) continue; const h = findSection(k); if (!h) continue;
     const grp = sectionOf(h); grp.slice(1).forEach(x => x.remove());
     let ref = h; parts[k].forEach(t => { const n = newNode(A.li(phHtml(t))); ref.after(n); ref = n; }); done++;
   }
-  if (!done) { toast('لا توجد أقسام مطابقة في هذا النموذج'); return false; }
+  if (!done) { toast('No matching sections in this template'); return false; }
   touch(); reflow(); window.scrollTo({top: 0, behavior: 'smooth'});
-  toast('تم تطبيق الحالة على التقرير', () => { reload(snap); touch(); }); return true;
+  toast('Case applied to the report', () => { reload(snap); touch(); }); return true;
 }
 const api = {readDocForName: () => readDoc(false), insertPhrase, applyCase, toast, unfilled, hasCursor: () => !!(cur.atom && cur.atom.isConnected && ['li', 'p'].includes(kind(cur.atom))), pages, sectionNames: () => docAtoms().filter(a => kind(a) === 'h1').map(a => $('.c', a).textContent)};
 
@@ -549,15 +550,21 @@ export function markEmpties(on) {
 }
 export function readDoc(hideEmpty) {
   markEmpties(hideEmpty);
-  const out = {fields: [], title: '', items: [], free: [], sig: null, brand: St.brand(), settings: S()};
+  const out = {fields: [], title: '', items: [], free: [], pad: null, stamp: '', fitK: parseFloat(PAGES.style.getPropertyValue('--k')) || 1, brand: St.brand(), settings: S()};
   docAtoms().forEach(a => {
     const k = kind(a); if (a.dataset.hide) return;
-    if (k === 'meta') $$('.mf', a).forEach(m => out.fields.push({l: $('.ml', m).textContent.replace(/:$/, ''), v: $('.mv', m).textContent.trim()}));
+    if (k === 'meta') $$('.mf', a).forEach(m => out.fields.push({l: $('.ml', m).textContent.replace(/:\s*$/, '').trim(), v: $('.mv', m).textContent.trim()}));
     else if (k === 'title') out.title = $('.c', a).textContent.trim();
     else out.items.push({t: k, html: $('.c', a).innerHTML, text: $('.c', a).textContent.trim()});
   });
-  pages().forEach((pg, i) => $$('.tbox', pg).forEach(d => { const t = $('.tb-c', d).textContent.trim(); if (t) out.free.push({p: i, y: parseFloat(d.style.top), html: $('.tb-c', d).innerHTML, text: t}); }));
-  if (D.sig.on !== false && sigEl) { const sg = sigState(), [l1, l2] = sigLines(); out.sig = {mode: sg.mode, x: sg.x, line1: l1, line2: l2, strokes: S().sig.strokes, pen: S().sig.pen, pw: S().sig.pw, stamp: stampSrc(), sx: S().sig.sx, sy: S().sig.sy, sw: S().sig.sw, image: (St.brand().signature || {}).image || ''}; }
+  $$('.float', PAGES).forEach(d => {
+    const f = floatData(d);
+    if (f.t === 'text') { const tx = $('.tb-c', d).textContent.trim(); if (tx) out.free.push({...f, text: tx}); }
+    else out.free.push({...f, text: ''});
+  });
+  out.free.sort((a, c) => a.p - c.p || a.y - c.y || a.x - c.x);
+  out.pad = {strokes: S().sig.strokes, pen: S().sig.pen, pw: S().sig.pw, image: (St.brand().signature || {}).image || ''};
+  out.stamp = stampSrc();
   markEmpties(false); return out;
 }
 let prepared = false;
@@ -566,97 +573,129 @@ export function endOutput() { if (!prepared) return; prepared = false; markEmpti
 window.addEventListener('beforeprint', () => { if (isOpen()) prepOutput(); });
 window.addEventListener('afterprint', () => { if (isOpen()) endOutput(); });
 
-/* ===== لوحة التحكم ===== */
-const TABS = [['xp', 'تصدير'], ['add', 'إضافة'], ['fmt', 'تنسيق'], ['page', 'الصفحة'], ['sig', 'التوقيع'], ['brand', 'الهوية']];
+/* ===== Control panel ===== */
+const TABS = [['xp', 'Export'], ['add', 'Add'], ['fmt', 'Format'], ['page', 'Page'], ['sig', 'Sign'], ['brand', 'Letterhead']];
 const seg = (key, opts) => `<div class="seg" data-seg="${key}">${opts.map(([v, l]) => `<button type="button" data-v="${v}">${l}</button>`).join('')}</div>`;
-const upl = (id, label) => `<div class="upl" data-upl="${id}"><img alt="" hidden><span class="nm">${label}</span><label class="btn sm fileb">رفع<input type="file" accept="image/*"></label><button class="btn sm danger" type="button" data-clr="${id}">حذف</button></div>`;
+const sw = (id, label) => `<label class="sw"><span>${label}</span><input type="checkbox" id="${id}"></label>`;
+const upl = (id, label) => `<div class="upl" data-upl="${id}"><img alt="" hidden><span class="nm">${label}</span><label class="btn sm fileb">Upload<input type="file" accept="image/*"></label><button class="btn sm danger" type="button" data-clr="${id}">Remove</button></div>`;
 function buildPanel() {
-  panel.innerHTML = `<button class="p-x" type="button" id="pClose" aria-label="إغلاق">✕</button>
+  panel.innerHTML = `<button class="p-x" type="button" id="pClose" aria-label="Close">✕</button>
+  <div class="pop"><span>◐ See-through</span><input type="range" id="pop" min="25" max="100" step="5" aria-label="Panel transparency"></div>
   <div class="tabs">${TABS.map(([k, l]) => `<button type="button" data-tabbtn="${k}">${l}</button>`).join('')}</div>
   <section class="tab" data-tab="xp">
-    <button class="btn dark" type="button" data-x="print">🖨 طباعة / حفظ PDF</button>
-    <button class="btn" type="button" data-x="docx">📄 تصدير ملف Word (.docx)</button>
-    <button class="btn" type="button" data-x="png">🖼 حفظ كصورة PNG</button>
-    <button class="btn" type="button" data-x="copy">📋 نسخ نص التقرير (للصق في أي نظام)</button>
-    <div class="lbl">صورة PNG</div>
-    ${seg('xmode', [['one', 'صورة واحدة طويلة'], ['each', 'صورة لكل صفحة']])}
-    ${seg('xq', [['1', 'عادية'], ['2', 'عالية'], ['3', 'عالية جداً']])}
-    <label class="sw"><span>مشاركة الملف بدل التنزيل (الهاتف)</span><input type="checkbox" id="shareOn"></label>
-    <div class="hint">يتم تجاهل البنود الفارغة تلقائياً في الطباعة والتصدير (يمكن تعطيل ذلك من تبويب «الصفحة»). تنبيه: ملف Word لا يحفظ مواضع النص الحر بدقة، بل يضعها بعد المحتوى.</div>
+    <button class="btn dark" type="button" data-x="print">🖨 Print / Save as PDF</button>
+    <button class="btn" type="button" data-x="docx">📄 Export Word file (.docx)</button>
+    <button class="btn" type="button" data-x="png">🖼 Save as image (PNG)</button>
+    <button class="btn" type="button" data-x="copy">📋 Copy report text</button>
+    <div class="lbl">PNG options</div>
+    ${seg('xmode', [['one', 'One long image'], ['each', 'Image per page']])}
+    ${seg('xq', [['1', 'Normal'], ['2', 'High'], ['3', 'Very high']])}
+    ${sw('shareOn', 'Share the file instead of downloading (phones)')}
+    <div class="hint">Empty items are skipped automatically in print and export (can be turned off in the Page tab). Note: Word export places free blocks (text, signature, stamp) after the content in reading order; exact positions are kept in PDF / print / PNG.</div>
   </section>
   <section class="tab" data-tab="add">
+    <div class="lbl">Report content</div>
     <div class="g3">
-      <button class="tbtn" type="button" data-add="li"><span class="ic">•</span><span>بند جديد</span></button>
-      <button class="tbtn" type="button" data-add="h2"><span class="ic">▪</span><span>عنوان فرعي</span></button>
-      <button class="tbtn" type="button" data-add="h1"><span class="ic">▪▪</span><span>عنوان قسم</span></button>
-      <button class="tbtn" type="button" data-add="p"><span class="ic">¶</span><span>فقرة نص</span></button>
-      <button class="tbtn" type="button" data-add="tb"><span class="ic">⬚</span><span>نص حر في أي مكان</span></button>
-      <button class="tbtn" type="button" data-add="ph"><span class="ic">[ ]</span><span>حقل للتعبئة</span></button>
+      <button class="tbtn" type="button" data-add="li"><span class="ic">•</span><span>Bullet</span></button>
+      <button class="tbtn" type="button" data-add="h2"><span class="ic">▪</span><span>Sub-heading</span></button>
+      <button class="tbtn" type="button" data-add="h1"><span class="ic">▪▪</span><span>Section heading</span></button>
+      <button class="tbtn" type="button" data-add="p"><span class="ic">¶</span><span>Paragraph</span></button>
+      <button class="tbtn" type="button" data-add="ph"><span class="ic">[ ]</span><span>Fill-in field</span></button>
     </div>
-    <div class="hint">يُضاف العنصر بعد البند الذي تقف عليه الآن. استخدم شريط (＋ بند / ↑ / ↓ / حذف) الذي يظهر فوق الأزرار أثناء الكتابة. «حقل للتعبئة» يضع [ ] ليسهل القفز إليه بزر «التالي».</div>
+    <div class="lbl">Free blocks (movable, deletable, unlimited)</div>
+    ${seg('place', [['end', 'At end of report'], ['here', 'Here (current view)']])}
+    <div class="g2">
+      <button class="tbtn" type="button" data-addf="text"><span class="ic">⬚</span><span>Free text</span></button>
+      <button class="tbtn" type="button" data-addf="sig"><span class="ic">Dr.</span><span>Signature text<br>(Best Regards…)</span></button>
+      <button class="tbtn" type="button" data-addf="pad"><span class="ic">✍</span><span>Signature drawing box</span></button>
+      <button class="tbtn" type="button" data-addf="stamp"><span class="ic">◉</span><span>Stamp</span></button>
+    </div>
+    <div class="hint">Tap a block to select it, then use <b>✥ Move</b> (drag to any place on any page), <b>↔</b> (width), <b>⇩ End</b> (jump below the last line) or <b>✕</b> (delete). Press Enter inside a text block to add more lines. Content items are added after the item you are editing.</div>
   </section>
   <section class="tab" data-tab="fmt">
     <div class="g4">
-      <button class="tbtn" type="button" data-fmt="bold"><span class="ic"><b>B</b></span><span>غامق</span></button>
-      <button class="tbtn" type="button" data-fmt="italic"><span class="ic"><i>I</i></span><span>مائل</span></button>
-      <button class="tbtn" type="button" data-fmt="underline"><span class="ic"><u>U</u></span><span>تسطير</span></button>
-      <button class="tbtn" type="button" data-fmt="clear"><span class="ic">⌫</span><span>مسح التنسيق</span></button>
-      <button class="tbtn" type="button" data-fmt="sz+"><span class="ic">A+</span><span>أكبر</span></button>
-      <button class="tbtn" type="button" data-fmt="sz-"><span class="ic">A−</span><span>أصغر</span></button>
-      <button class="tbtn" type="button" data-fmt="undo"><span class="ic">↶</span><span>تراجع</span></button>
-      <button class="tbtn" type="button" data-fmt="redo"><span class="ic">↷</span><span>إعادة</span></button>
+      <button class="tbtn" type="button" data-fmt="bold"><span class="ic"><b>B</b></span><span>Bold</span></button>
+      <button class="tbtn" type="button" data-fmt="italic"><span class="ic"><i>I</i></span><span>Italic</span></button>
+      <button class="tbtn" type="button" data-fmt="underline"><span class="ic"><u>U</u></span><span>Underline</span></button>
+      <button class="tbtn" type="button" data-fmt="clear"><span class="ic">⌫</span><span>Clear format</span></button>
+      <button class="tbtn" type="button" data-fmt="sz+"><span class="ic">A+</span><span>Larger</span></button>
+      <button class="tbtn" type="button" data-fmt="sz-"><span class="ic">A−</span><span>Smaller</span></button>
+      <button class="tbtn" type="button" data-fmt="undo"><span class="ic">↶</span><span>Undo</span></button>
+      <button class="tbtn" type="button" data-fmt="redo"><span class="ic">↷</span><span>Redo</span></button>
     </div>
-    <div class="hint">حدّد النص أولاً ثم اضغط. العناوين غامقة تلقائياً.</div>
+    <div class="hint">Select the text first, then tap. Headings are bold automatically.</div>
+    ${sw('phOn', 'Highlight [ ] fields (tap one to pick an option)')}
+    <div class="hint">Off by default: bracketed text stays plain text you can edit normally. Turn on to see [ ] fields in yellow, jump between them with “[ ] Next”, and pick from “a / b / c” options.</div>
   </section>
   <section class="tab" data-tab="page">
-    <div class="lbl">حجم العرض</div>
-    <div class="g3"><button class="btn" type="button" data-x="zout">− تصغير</button><button class="btn" type="button" data-x="zfit">ملاءمة</button><button class="btn" type="button" data-x="zin">+ تكبير</button></div>
-    <div class="lbl">ترقيم الصفحات</div>
-    ${seg('pn', [['off', 'بدون'], ['n', '1'], ['nofm', '1 / 3'], ['page', 'Page 1 of 3']])}
-    ${seg('pnPos', [['l', 'يسار'], ['r', 'يمين']])}
-    <div class="lbl">الترويسة (إن وُجدت)</div>
-    ${seg('hdr', [['all', 'كل الصفحات'], ['first', 'الأولى فقط'], ['none', 'إخفاء']])}
-    <div class="lbl">التذييل (إن وُجد)</div>
-    ${seg('ftr', [['all', 'كل الصفحات'], ['last', 'الأخيرة فقط'], ['none', 'إخفاء']])}
-    <div class="lbl">الخط الفاصل أعلى التذييل / الترقيم</div>
-    ${seg('fline', [['auto', 'تلقائي'], ['on', 'دائماً'], ['off', 'إخفاء']])}
-    <label class="sw"><span>إخفاء البنود الفارغة عند الطباعة والتصدير</span><input type="checkbox" id="hideEmpty"></label>
+    ${sw('fit', 'Fit report on ONE page (shrinks text only if needed)')}
+    <div class="lbl">Patient info fields</div>
+    <div id="fldList"></div>
+    ${seg('metaCols', [['2', 'Two columns'], ['1', 'One column']])}
+    ${sw('titleLines', 'Lines above and below the title')}
+    <div class="lbl">View size</div>
+    <div class="g3"><button class="btn" type="button" data-x="zout">− Smaller</button><button class="btn" type="button" data-x="zfit">Fit</button><button class="btn" type="button" data-x="zin">+ Larger</button></div>
+    <div class="lbl">Page numbers</div>
+    ${seg('pn', [['off', 'None'], ['n', '1'], ['nofm', '1 / 3'], ['page', 'Page 1 of 3']])}
+    ${seg('pnPos', [['l', 'Left'], ['r', 'Right']])}
+    <div class="lbl">Header (if set)</div>
+    ${seg('hdr', [['all', 'All pages'], ['first', 'First only'], ['none', 'Hide']])}
+    ${seg('hline', [['on', 'Line under header'], ['off', 'No line']])}
+    <div class="lbl">Footer (if set)</div>
+    ${seg('ftr', [['all', 'All pages'], ['last', 'Last only'], ['none', 'Hide']])}
+    ${seg('fline', [['auto', 'Line: auto'], ['on', 'Line: always'], ['off', 'No line']])}
+    ${sw('hideEmpty', 'Skip empty items when printing / exporting')}
   </section>
   <section class="tab" data-tab="sig">
-    <label class="sw"><span>إظهار التوقيع في التقرير</span><input type="checkbox" id="sigOn"></label>
-    <div class="g2"><button class="btn" type="button" data-x="sigauto">⇩ أسفل آخر صفحة (تلقائي)</button><button class="btn danger" type="button" data-x="sigclr">مسح التوقيع المرسوم</button></div>
-    <div class="hint">للتحريك: اضغط على التوقيع ثم اسحب زر «✥ تحريك» إلى أي مكان في أي صفحة – حتى لو بقي جزء صغير في آخر الصفحة. زر «↔» يغيّر حجمه. التوقيع المرسوم والاسم يُحفظان على جهازك ويظهران في كل تقرير جديد.</div>
-    <div class="lbl">لون القلم</div>
-    ${seg('pen', [['#0b1a4a', 'كحلي'], ['#000000', 'أسود'], ['#1740c8', 'أزرق']])}
-    <div class="lbl">سمك الخط</div><input type="range" id="penW" min="1" max="5" step=".2">
-    ${upl('stamp', 'صورة الختم')}
-    <div class="lbl">حجم الختم</div><input type="range" id="stampW" min="12" max="60" step="1">
-    <div class="hint">الختم يُسحب داخل مربع التوقيع. لا يظهر ختم افتراضي.</div>
+    ${sw('sigDefault', 'Add “Best Regards / Dr.” text to new reports')}
+    <div class="g2"><button class="btn" type="button" data-x="sigreset">Reset signature wording</button><button class="btn danger" type="button" data-x="sigclr">Clear saved drawing</button></div>
+    <div class="hint">Add signature text, drawing box or stamp from the <b>Add</b> tab. Each one is a separate block you can move, resize, delete or add again. The drawing and the wording are saved on this device and reused in every report.</div>
+    <div class="lbl">Pen color</div>
+    ${seg('pen', [['#0b1a4a', 'Navy'], ['#000000', 'Black'], ['#1740c8', 'Blue']])}
+    <div class="lbl">Pen thickness</div><input type="range" id="penW" min="1" max="5" step=".2">
+    ${upl('stamp', 'Stamp image')}
+    <div class="hint">No stamp by default. After uploading, add it from Add → Stamp.</div>
   </section>
   <section class="tab" data-tab="brand">
-    <div class="hint">الهوية (ترويسة، تذييل، شعارات، علامة مائية) فارغة افتراضياً لأن النموذج غير مخصص لجهة معيّنة. عبّئ ما تريد وسيظهر في كل التقارير على هذا الجهاز.</div>
-    <div class="lbl">الترويسة</div>
-    <input class="fi" data-b="header.line1" placeholder="السطر 1 (اسم المستشفى / المركز)"><input class="fi" data-b="header.line2" placeholder="السطر 2 (القسم)"><input class="fi" data-b="header.line3" placeholder="السطر 3 (عنوان / هاتف)">
-    ${upl('logoLeft', 'شعار اليسار')}${upl('logoRight', 'شعار اليمين')}
-    <div class="lbl">التذييل</div>
-    <input class="fi" data-b="footer.line1" placeholder="سطر التذييل 1"><input class="fi" data-b="footer.line2" placeholder="سطر التذييل 2">
-    <div class="lbl">العلامة المائية</div>
-    ${upl('wm', 'صورة العلامة المائية')}
-    <label class="sw"><span>إظهار العلامة المائية</span><input type="checkbox" id="wmOn"></label>
-    <div class="lbl">شفافية العلامة المائية</div><input type="range" id="wmOp" min="3" max="25" step="1">
+    <div class="hint">Letterhead (header, footer, logos, watermark) is empty by default because the template is not tied to a specific institution. Fill what you need; it appears in all reports on this device.</div>
+    <div class="lbl">Header</div>
+    <input class="fi" data-b="header.line1" placeholder="Line 1 (hospital / center name)"><input class="fi" data-b="header.line2" placeholder="Line 2 (department)"><input class="fi" data-b="header.line3" placeholder="Line 3 (address / phone)">
+    ${upl('logoLeft', 'Left logo')}${upl('logoRight', 'Right logo')}
+    <div class="lbl">Footer</div>
+    <input class="fi" data-b="footer.line1" placeholder="Footer line 1"><input class="fi" data-b="footer.line2" placeholder="Footer line 2">
+    <div class="lbl">Watermark</div>
+    ${upl('wm', 'Watermark image')}
+    ${sw('wmOn', 'Show watermark')}
+    <div class="lbl">Watermark opacity</div><input type="range" id="wmOp" min="3" max="25" step="1">
   </section>`;
   syncPanel();
+}
+const metaAtom = () => docAtoms().find(a => kind(a) === 'meta');
+function renderFields() {
+  const box = $('#fldList', panel), m = metaAtom(); if (!box) return;
+  const rows = m ? $$('.mf', m) : [];
+  box.innerHTML = rows.map((f, i) => `<div class="frow"><input class="fi" data-fi="${i}" value="${esc($('.ml', f).textContent)}" aria-label="Field name"><button class="btn sm" type="button" data-fup="${i}" aria-label="Move up">↑</button><button class="btn sm danger" type="button" data-fdel="${i}" aria-label="Delete field">✕</button></div>`).join('')
+    + `<div class="frow"><input class="fi" id="fNew" placeholder="New field name…"><button class="btn sm dark" type="button" data-fadd>＋ Add</button></div>`;
+}
+function applyPop() { const o = clamp((S().pop || 100) / 100, .25, 1); panel.style.opacity = o; $('#bank').style.opacity = o; }
+function applyOpts() {
+  const s = S();
+  PAGES.classList.toggle('ph-off', !s.phOn); PAGES.classList.toggle('tl-on', !!s.titleLines);
+  PAGES.classList.toggle('mc1', String(s.metaCols) === '1'); PAGES.classList.toggle('hl-off', s.hline === 'off');
+  applyPop(); updateCtx();
 }
 function syncPanel() {
   const s = S();
   $$('[data-seg]', panel).forEach(sg => $$('button', sg).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === String(sg.dataset.seg === 'pen' ? s.sig.pen : s[sg.dataset.seg])))));
-  $('#hideEmpty', panel).checked = !!s.hideEmpty; $('#shareOn', panel).checked = !!s.share; $('#sigOn', panel).checked = D && D.sig.on !== false;
-  $('#penW', panel).value = s.sig.pw; $('#stampW', panel).value = s.sig.sw; $('#wmOn', panel).checked = !!s.wmOn; $('#wmOp', panel).value = s.wmOp;
+  $('#hideEmpty', panel).checked = !!s.hideEmpty; $('#shareOn', panel).checked = !!s.share; $('#phOn', panel).checked = !!s.phOn; $('#titleLines', panel).checked = !!s.titleLines;
+  $('#fit', panel).checked = !!(D && D.fit); $('#sigDefault', panel).checked = s.sigDefault !== false; $('#pop', panel).value = s.pop || 100;
+  $('#penW', panel).value = s.sig.pw; $('#wmOn', panel).checked = !!s.wmOn; $('#wmOp', panel).value = s.wmOp;
   $$('[data-b]', panel).forEach(i => { const [a, b] = i.dataset.b.split('.'); i.value = (St.brand()[a] || {})[b] || ''; });
   const b = St.brand(), map = {logoLeft: (b.header || {}).logoLeft, logoRight: (b.header || {}).logoRight, wm: (b.watermark || {}).image, stamp: (b.stamp || {}).image};
   $$('[data-upl]', panel).forEach(u => { const src = map[u.dataset.upl], im = $('img', u); im.hidden = !src; if (src) im.src = src; });
+  $('[data-add=ph]', panel).hidden = !s.phOn;
 }
-export function showTab(t) { panel.dataset.tab = t; $$('[data-tabbtn]', panel).forEach(b => b.classList.toggle('on', b.dataset.tabbtn === t)); $$('.tab', panel).forEach(s => s.classList.toggle('on', s.dataset.tab === t)); $$('.dk').forEach(d => d.classList.toggle('act', (panel.classList.contains('open') && d.dataset.open === t) || (d.dataset.open === 'bank' && bankOpen()))); }
+export function showTab(t) { panel.dataset.tab = t; if (t === 'page') renderFields(); $$('[data-tabbtn]', panel).forEach(b => b.classList.toggle('on', b.dataset.tabbtn === t)); $$('.tab', panel).forEach(s => s.classList.toggle('on', s.dataset.tab === t)); $$('.dk').forEach(d => d.classList.toggle('act', (panel.classList.contains('open') && d.dataset.open === t) || (d.dataset.open === 'bank' && bankOpen()))); }
 function padBottom() { const h = panel.classList.contains('open') ? panel.offsetHeight : bankOpen() ? $('#bank').offsetHeight : 0; $('#viewport').style.paddingBottom = (h && innerWidth < 900) ? (h + 90) + 'px' : ''; }
 export function openPanel(t) { closeBank(); panel.classList.add('open'); showTab(t); updateCtx(); padBottom(); }
 export function closePanel() { panel.classList.remove('open'); showTab(panel.dataset.tab || 'xp'); updateCtx(); padBottom(); }
@@ -674,11 +713,16 @@ panel.addEventListener('click', async e => {
   if (sg) {
     const key = sg.closest('[data-seg]').dataset.seg, v = sg.dataset.v;
     if (key === 'pen') { S().sig.pen = v; redraw(); } else S()[key] = v;
-    St.saveSettings(); syncPanel(); reflow(); return;
+    St.saveSettings(); syncPanel(); applyOpts(); reflow(); return;
   }
   const f = t.closest('[data-fmt]'); if (f) return doFmt(f.dataset.fmt);
+  const af = t.closest('[data-addf]'); if (af) return void addFloat(af.dataset.addf);
   const ad = t.closest('[data-add]');
-  if (ad) { const k = ad.dataset.add; if (k === 'tb') return addTbox(); if (k === 'ph') { if (!document.activeElement || !document.activeElement.isContentEditable) return toast('اضغط داخل نص أولاً'); document.execCommand('insertHTML', false, '<span class="ph">[ ]</span>&nbsp;'); touch(); return; } closePanel(); return addAtom(k); }
+  if (ad) { const k = ad.dataset.add; if (k === 'ph') { if (!document.activeElement || !document.activeElement.isContentEditable) return toast('Tap inside a text first'); document.execCommand('insertHTML', false, '<span class="ph">[ ]</span>&nbsp;'); touch(); return; } closePanel(); return addAtom(k); }
+  const fa = t.closest('[data-fadd]');
+  if (fa) { const inp = $('#fNew', panel), m = metaAtom(); if (!m) return; const lab = inp.value.trim() || 'Field'; $('.meta-grid', m).insertAdjacentHTML('beforeend', A.mf(lab)); touch(); reflow(); renderFields(); return; }
+  const fd = t.closest('[data-fdel]'); if (fd) { const m = metaAtom(), rows = m ? $$('.mf', m) : [], r = rows[+fd.dataset.fdel]; if (r) { const snap = snapshot(); r.remove(); touch(); reflow(); renderFields(); toast('Field removed', () => { reload(snap); touch(); renderFields(); }); } return; }
+  const fu = t.closest('[data-fup]'); if (fu) { const m = metaAtom(), rows = m ? $$('.mf', m) : [], i = +fu.dataset.fup; if (i > 0 && rows[i]) { rows[i - 1].before(rows[i]); touch(); renderFields(); } return; }
   const clr = t.closest('[data-clr]');
   if (clr) { setImage(clr.dataset.clr, ''); return; }
   const x = t.closest('[data-x]'); if (!x) return;
@@ -686,58 +730,65 @@ panel.addEventListener('click', async e => {
   if (a === 'print') Exp.printReport(api, {prepOutput, endOutput}); else if (a === 'docx') Exp.exportDocx(api, readDoc, S()); else if (a === 'png') Exp.exportPng(api, {prepOutput, endOutput, pages}, S());
   else if (a === 'copy') Exp.copyText(readDoc(S().hideEmpty)); else if (a === 'zin') { S().zoom = clamp((S().zoom || 1) + .15, .5, 3); St.saveSettings(); scaleView(); }
   else if (a === 'zout') { S().zoom = clamp((S().zoom || 1) - .15, .5, 3); St.saveSettings(); scaleView(); } else if (a === 'zfit') { S().zoom = 1; St.saveSettings(); scaleView(); }
-  else if (a === 'sigauto') sigToAuto(); else if (a === 'sigclr') { S().sig.strokes = []; redraw(); St.saveSettings(); }
+  else if (a === 'sigclr') { S().sig.strokes = []; redraw(); St.saveSettings(); toast('Drawing cleared'); }
+  else if (a === 'sigreset') { S().sigText = null; St.saveSettings(); toast('New signature text will use the default wording'); }
 });
 panel.addEventListener('change', async e => {
   const t = e.target;
   if (t.id === 'hideEmpty') S().hideEmpty = t.checked; else if (t.id === 'shareOn') S().share = t.checked;
-  else if (t.id === 'wmOn') { S().wmOn = t.checked; renderBrand(); } else if (t.id === 'sigOn') { D.sig.on = t.checked; if (!t.checked && sigEl) sigEl.remove(); else ensureSig(); reflow(); touch(); }
+  else if (t.id === 'phOn') { S().phOn = t.checked; syncPanel(); applyOpts(); } else if (t.id === 'titleLines') { S().titleLines = t.checked; applyOpts(); reflow(); }
+  else if (t.id === 'sigDefault') S().sigDefault = t.checked;
+  else if (t.id === 'fit') { D.fit = t.checked; touch(); reflow(); if (t.checked) { const k = parseFloat(PAGES.style.getPropertyValue('--k')) || 1; toast(k < 1 ? `Shrunk to ${Math.round(k * 100)}% to fit one page` : 'Already fits on one page'); } return; }
+  else if (t.id === 'wmOn') { S().wmOn = t.checked; renderBrand(); }
   else if (t.type === 'file') { const u = t.closest('[data-upl]'); if (t.files[0]) setImage(u.dataset.upl, await readImg(t.files[0], u.dataset.upl === 'wm' ? 1400 : 700)); t.value = ''; return; }
   St.saveSettings();
 });
 panel.addEventListener('input', e => {
   const t = e.target;
+  if (t.dataset.fi != null) { const m = metaAtom(), r = m && $$('.mf', m)[+t.dataset.fi]; if (r) { $('.ml', r).textContent = t.value; touch(); schedReflow(); } return; }
   if (t.dataset.b) { St.setBrand(t.dataset.b, t.value); renderBrand(); reflow(); }
-  else if (t.id === 'penW') { S().sig.pw = +t.value; redraw(); St.saveSettings(); } else if (t.id === 'stampW') { S().sig.sw = +t.value; refreshStamp(); St.saveSettings(); }
+  else if (t.id === 'penW') { S().sig.pw = +t.value; redraw(); St.saveSettings(); }
   else if (t.id === 'wmOp') { S().wmOp = +t.value; renderBrand(); St.saveSettings(); }
+  else if (t.id === 'pop') { S().pop = +t.value; applyPop(); St.saveSettings(); }
 });
 function setImage(id, val) {
   const path = {logoLeft: 'header.logoLeft', logoRight: 'header.logoRight', wm: 'watermark.image', stamp: 'stamp.image'}[id];
-  St.setBrand(path, val); if (id === 'wm') { S().wmOn = true; } renderBrand(); refreshStamp(); syncPanel(); reflow(); toast(val ? 'تم الحفظ' : 'تم الحذف');
+  St.setBrand(path, val); if (id === 'wm') { S().wmOn = true; } renderBrand(); refreshStamps(); syncPanel(); reflow(); toast(val ? 'Saved' : 'Removed');
 }
 function doFmt(f) {
-  const ae = document.activeElement; if (!ae || !ae.isContentEditable) return toast('اضغط داخل نص أولاً');
+  const ae = document.activeElement; if (!ae || !ae.isContentEditable) return toast('Tap inside a text first');
   const map = {bold: 'bold', italic: 'italic', underline: 'underline', clear: 'removeFormat', undo: 'undo', redo: 'redo'};
   if (f === 'sz+' || f === 'sz-') { const c = parseInt(document.queryCommandValue('fontSize')) || 3; document.execCommand('fontSize', false, clamp(c + (f === 'sz+' ? 1 : -1), 1, 7)); }
   else document.execCommand(map[f], false, null);
   touch(); schedReflow();
 }
+api.setPop = v => { S().pop = v; applyPop(); St.saveSettings(); }; api.getPop = () => S().pop || 100;
 
-/* ===== الشريط العلوي والقوائم ===== */
+/* ===== Top bar and menus ===== */
 $('#abBack').onclick = () => { save(); if (history.state && history.state.rr) history.back(); else { location.hash = ''; window.dispatchEvent(new Event('popstate')); } };
 $('#abVar').onclick = () => {
-  choose('اختر نسخة النموذج', study.variants.map(v => ({label: v.label, sub: VAR_DESC[v.kind] || '', value: v.id, current: v.id === D.variantId})), vid => {
+  choose('Choose template version', study.variants.map(v => ({label: v.label, sub: VAR_DESC[v.kind] || '', value: v.id, current: v.id === D.variantId})), vid => {
     if (vid === D.variantId && !D.edited) return;
     const go = () => switchVariant(vid);
-    if (D.edited) confirmBox('تغيير النسخة', 'سيتم استبدال محتوى التقرير الحالي بالنسخة المختارة (تُحفظ بيانات المريض في الأعلى، ويمكنك التراجع).', 'استبدال', go); else go();
+    if (D.edited) confirmBox('Change version', 'The report body will be replaced by the selected version. Patient fields are kept, and you can undo.', 'Replace', go); else go();
   });
 };
 function switchVariant(vid) {
   const snap = snapshot(), oldV = D.variantId, wasEdited = D.edited, v = study.variants.find(x => x.id === vid);
-  const vals = {}; $$('.mv', PAGES).forEach(m => { vals[m.dataset.lbl] = m.textContent; });
-  D.variantId = vid; reload(atomsFromVariant(v, vals)); touch(); updateBar(); window.scrollTo(0, 0);
-  toast('تم تغيير النسخة', () => { D.variantId = oldV; reload(snap); D.edited = wasEdited; touch(); updateBar(); });
+  const m = metaAtom(), list = atomsFromVariant(v); if (m) list[0] = m.cloneNode(true).outerHTML;
+  D.variantId = vid; reload(list); touch(); updateBar(); window.scrollTo(0, 0);
+  toast('Version changed', () => { D.variantId = oldV; reload(snap); D.edited = wasEdited; touch(); updateBar(); });
 }
 $('#abMore').onclick = () => {
-  choose('خيارات التقرير', [
-    {label: '📋 نسخ نص التقرير', value: 'copy'}, {label: '＋ تقرير جديد من نفس الدراسة', sub: 'يُحفظ هذا التقرير في المسودات', value: 'new'},
-    {label: '🗑 حذف هذه المسودة', value: 'del'}], v => {
+  choose('Report options', [
+    {label: '📋 Copy report text', value: 'copy'}, {label: '＋ New report from the same study', sub: 'This report stays in My drafts', value: 'new'},
+    {label: '🗑 Delete this draft', value: 'del'}], v => {
       if (v === 'copy') Exp.copyText(readDoc(S().hideEmpty));
       else if (v === 'new') { save(); window.dispatchEvent(new CustomEvent('rr:new', {detail: {studyId: D.studyId, variantId: D.variantId}})); }
-      else if (v === 'del') confirmBox('حذف المسودة', 'سيتم حذف هذا التقرير نهائياً.', 'حذف', () => { const id = D.id; D.edited = false; St.removeDraft(id); close(); window.dispatchEvent(new CustomEvent('rr:home')); });
+      else if (v === 'del') confirmBox('Delete draft', 'This report will be deleted permanently.', 'Delete', () => { const id = D.id; D.edited = false; St.removeDraft(id); close(); window.dispatchEvent(new CustomEvent('rr:home')); });
     });
 };
 let lw = 0;
 window.addEventListener('resize', () => { const w = innerWidth; if (isOpen() && w !== lw) { lw = w; scaleView(); } });
 if (window.visualViewport) { const kb = () => { const k = Math.max(0, innerHeight - visualViewport.height - visualViewport.offsetTop); document.documentElement.style.setProperty('--kb', Math.round(k) + 'px'); }; visualViewport.addEventListener('resize', kb); visualViewport.addEventListener('scroll', kb); }
-window.__dbg = {get D() { return D; }, reflow, docAtoms, pages, api, readDoc, nextPh, addAtom, moveAtom, delAtom, sigToFree, get sigEl() { return sigEl; }};
+window.__dbg = {get D() { return D; }, reflow, docAtoms, pages, api, readDoc, nextPh, addAtom, moveAtom, delAtom, addFloat, floatData};

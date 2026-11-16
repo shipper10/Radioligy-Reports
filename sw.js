@@ -1,5 +1,5 @@
 // Service Worker: يعمل دون اتصال. الشبكة أولاً (لتصلك التحديثات فوراً) ثم النسخة المخزنة.
-const V = 'rr-v1';
+const V = 'rr-v2';
 const SHELL = ['./', 'index.html', 'css/app.css', 'js/app.js', 'js/editor.js', 'js/bank.js', 'js/export.js', 'js/data.js', 'js/store.js', 'js/util.js',
   'data/index.json', 'data/branding.json', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', e => {
