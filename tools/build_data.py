@@ -191,6 +191,38 @@ def classify_file(stem):
     return "variant", kind, layout
 
 
+STOP = {"template", "blank", "normal", "limited", "standard", "prominent", "lead", "us", "ultrasound", "report", "reports", "docx"}
+
+
+def name_duplicates(variants):
+    """عند وجود أكثر من ملف من نفس النوع (مثلاً عدة Normal) نستخرج من اسم الملف ما يميّز كل واحد ليظهر في قائمة النسخ."""
+    groups = {}
+    for v in variants:
+        groups.setdefault((v["kind"], v["layout"]), []).append(v)
+    for (kind, layout), vs in groups.items():
+        if len(vs) > 1:
+            toks = [[t for t in re.split(r"[_\s\-]+", v["_stem"]) if t and t.lower() not in STOP] for v in vs]
+            common = set.intersection(*[set(t.lower() for t in x) for x in toks])
+            for v, tk in zip(vs, toks):
+                if v["_ovr"]:
+                    continue
+                q = " ".join(t for t in tk if t.lower() not in common).strip()
+                if q:
+                    v["label"] = kind.capitalize() + (f" · {layout}" if layout else "") + " · " + q.replace("_", " ")
+        seen = {}
+        for v in vs:
+            seen[v["label"]] = seen.get(v["label"], 0) + 1
+        dup = {k for k, n in seen.items() if n > 1}
+        idx = {}
+        for v in vs:
+            if v["label"] in dup:
+                idx[v["label"]] = idx.get(v["label"], 0) + 1
+                v["label"] += f" {idx[v['label']]}"
+    for v in variants:
+        v.pop("_stem", None)
+        v.pop("_ovr", None)
+
+
 def build():
     modalities_cfg = load_json(DATA / "modalities.json", {})
     meta = load_json(DATA / "catalog-meta.json", {"groups": {}, "studies": {}})
@@ -236,11 +268,12 @@ def build():
                             vid += "-" + slug(f.stem)[-6:]
                         if not rep["blocks"]:
                             warnings.append(f"{f.name}: لا توجد بنود")
-                        variants.append({"id": vid, "kind": kind, "layout": layout, "label": label, **rep})
+                        variants.append({"id": vid, "kind": kind, "layout": layout, "label": label, "_stem": f.stem, "_ovr": bool(label_override), **rep})
                 except Exception as e:  # noqa
                     warnings.append(f"{f.name}: تعذّرت القراءة ({e})")
             if not variants and not bank:
                 continue
+            name_duplicates(variants)
             variants.sort(key=lambda v: (KIND_ORDER.get(v["kind"], 9), v["layout"], v["id"]))
             sid = f"{mod_id}-{slug(folder.name)}"
             study = {

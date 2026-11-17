@@ -35,3 +35,11 @@ Vercel يعيد النشر تلقائياً. التطبيق المثبّت يت�
 
 ## 7) التحقق من عدم ضياع نصوص
 كل بناء يقارن **كل فقرة** في كل ملف docx (بما فيها الجداول والصناديق النصية) بما استُخرج. أي نص مفقود يُكتب في `data/build-report.txt` بسطر `WARNING`. إن كان الملف يقول `OK: no lost text` فكل نص التُقط.
+
+## 8) أكثر من قالب لنفس النوع (مثلاً عدة Normal لحالات مختلفة)
+ضع الملفات في نفس مجلد الدراسة وسمِّها باسم يميّز كل واحد، مثل:
+`Trauma_Skull_Normal.docx` ، `Trauma_Skull_Normal_Hematoma.docx` ، `Trauma_Skull_Normal_Fracture.docx`.
+بعد البناء تظهر كلها في قائمة النسخ (زر **Version** أعلى المحرر) بأسماء: `Normal` ، `Normal · Hematoma` ، `Normal · Fracture` (الاسم يُستخرج من الجزء المختلف في اسم الملف). لتسمية مخصصة أضف `variant_labels` في `data/catalog-meta.json`.
+
+## 9) النسخ بين القوالب داخل المحرر
+من زر **Phrases** ← تبويب **Copy from versions**: افتح أي نسخة من نفس الدراسة (Blank / Normal / Limited…) ثم اضغط على سطر لإدراجه، أو **Insert** لنسخ قسم كامل، أو **Replace** لاستبدال القسم المطابق في تقريرك.

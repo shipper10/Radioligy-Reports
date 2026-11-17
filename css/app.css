@@ -274,3 +274,6 @@ body.home-on #toast{bottom:24px}
 }
 
 body.printing .atom[data-hide]{display:none!important}
+
+.sec-h{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:10px 0 4px;font-size:13px;color:var(--navy)}
+.sec-h span{display:flex;gap:6px;flex:none}

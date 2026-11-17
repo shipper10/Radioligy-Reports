@@ -145,9 +145,9 @@ function reflow() {
       }
       return res;
     };
-    setK(1); let res = run();
+    const base = D.fsz || 1; setK(base); let res = run();
     if (D.fit && res.count > 1) {          // ملاءمة صفحة واحدة: تصغير الخط تدريجياً
-      let k = 1;
+      let k = base;
       while (res.count > 1 && k > 0.46) { k = Math.round((k - 0.03) * 100) / 100; setK(k); res = run(); }
     }
     if (D.fit && res.count === 1) {        // اترك مكاناً للتوقيع (نص التوقيع) أسفل المحتوى
@@ -535,7 +535,26 @@ function applyCase(g) {
   touch(); reflow(); window.scrollTo({top: 0, behavior: 'smooth'});
   toast('Case applied to the report', () => { reload(snap); touch(); }); return true;
 }
-const api = {readDocForName: () => readDoc(false), insertPhrase, applyCase, toast, unfilled, hasCursor: () => !!(cur.atom && cur.atom.isConnected && ['li', 'p'].includes(kind(cur.atom))), pages, sectionNames: () => docAtoms().filter(a => kind(a) === 'h1').map(a => $('.c', a).textContent)};
+const kindOfTitle = t => Object.keys(SEC_RX).find(k => SEC_RX[k].test(t)) || '';
+const keyOf = t => String(t).toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g, ' ').trim();
+// نسخ قسم كامل من نسخة أخرى (Blank / Normal …): إدراج بعد قسم المؤشر، أو استبدال القسم المطابق في التقرير
+function insertSection(blocks, replace) {
+  if (!blocks.length) return;
+  const snap = snapshot(), head = blocks[0];
+  const nodes = blocks.map(b => newNode(b.t === 'li' ? A.li(phHtml(b.x)) : b.t === 'h2' ? A.h2(b.x) : A.h1(b.x)));
+  const existing = replace && head.t === 'h1' ? docAtoms().find(a => kind(a) === 'h1' && keyOf($('.c', a).textContent) === keyOf(head.x)) : null;
+  let ref, msg;
+  if (existing) { sectionOf(existing).slice(1).forEach(x => x.remove()); ref = existing; nodes.shift(); msg = 'Section replaced'; }
+  else {
+    const list = docAtoms(); let c = cur.atom && cur.atom.isConnected ? cur.atom : null, h = null;
+    if (c) for (let i = list.indexOf(c); i >= 0; i--) if (kind(list[i]) === 'h1') { h = list[i]; break; }
+    ref = h ? lastOfSection(h) : list.at(-1); msg = replace ? 'No matching section here – inserted instead' : 'Section inserted';
+  }
+  nodes.forEach(n => { ref.after(n); ref = n; });
+  touch(); reflow(); if (nodes[0]) flashAtom(nodes[0]);
+  toast(msg, () => { reload(snap); touch(); });
+}
+const api = {readDocForName: () => readDoc(false), insertPhrase, applyCase, insertSection, kindOfTitle, toast, unfilled, hasCursor: () => !!(cur.atom && cur.atom.isConnected && ['li', 'p'].includes(kind(cur.atom))), pages, sectionNames: () => docAtoms().filter(a => kind(a) === 'h1').map(a => $('.c', a).textContent)};
 
 /* ===== قراءة التقرير للتصدير ===== */
 const hasText = a => !!$('.c', a).textContent.trim();
@@ -613,6 +632,9 @@ function buildPanel() {
     <div class="hint">Tap a block to select it, then use <b>✥ Move</b> (drag to any place on any page), <b>↔</b> (width), <b>⇩ End</b> (jump below the last line) or <b>✕</b> (delete). Press Enter inside a text block to add more lines. Content items are added after the item you are editing.</div>
   </section>
   <section class="tab" data-tab="fmt">
+    <div class="lbl">Text size of the whole page</div>
+    <div class="g3"><button class="btn" type="button" data-x="fsdn">A−</button><button class="btn" type="button" data-x="fsreset" id="fsVal">100%</button><button class="btn" type="button" data-x="fsup">A+</button></div>
+    <div class="lbl">Selected text</div>
     <div class="g4">
       <button class="tbtn" type="button" data-fmt="bold"><span class="ic"><b>B</b></span><span>Bold</span></button>
       <button class="tbtn" type="button" data-fmt="italic"><span class="ic"><i>I</i></span><span>Italic</span></button>
@@ -688,7 +710,7 @@ function syncPanel() {
   const s = S();
   $$('[data-seg]', panel).forEach(sg => $$('button', sg).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === String(sg.dataset.seg === 'pen' ? s.sig.pen : s[sg.dataset.seg])))));
   $('#hideEmpty', panel).checked = !!s.hideEmpty; $('#shareOn', panel).checked = !!s.share; $('#phOn', panel).checked = !!s.phOn; $('#titleLines', panel).checked = !!s.titleLines;
-  $('#fit', panel).checked = !!(D && D.fit); $('#sigDefault', panel).checked = s.sigDefault !== false; $('#pop', panel).value = s.pop || 100;
+  $('#fit', panel).checked = !!(D && D.fit); $('#fsVal', panel).textContent = Math.round(((D && D.fsz) || 1) * 100) + '%'; $('#sigDefault', panel).checked = s.sigDefault !== false; $('#pop', panel).value = s.pop || 100;
   $('#penW', panel).value = s.sig.pw; $('#wmOn', panel).checked = !!s.wmOn; $('#wmOp', panel).value = s.wmOp;
   $$('[data-b]', panel).forEach(i => { const [a, b] = i.dataset.b.split('.'); i.value = (St.brand()[a] || {})[b] || ''; });
   const b = St.brand(), map = {logoLeft: (b.header || {}).logoLeft, logoRight: (b.header || {}).logoRight, wm: (b.watermark || {}).image, stamp: (b.stamp || {}).image};
@@ -730,6 +752,7 @@ panel.addEventListener('click', async e => {
   if (a === 'print') Exp.printReport(api, {prepOutput, endOutput}); else if (a === 'docx') Exp.exportDocx(api, readDoc, S()); else if (a === 'png') Exp.exportPng(api, {prepOutput, endOutput, pages}, S());
   else if (a === 'copy') Exp.copyText(readDoc(S().hideEmpty)); else if (a === 'zin') { S().zoom = clamp((S().zoom || 1) + .15, .5, 3); St.saveSettings(); scaleView(); }
   else if (a === 'zout') { S().zoom = clamp((S().zoom || 1) - .15, .5, 3); St.saveSettings(); scaleView(); } else if (a === 'zfit') { S().zoom = 1; St.saveSettings(); scaleView(); }
+  else if (a === 'fsup' || a === 'fsdn' || a === 'fsreset') { D.fsz = a === 'fsreset' ? 1 : clamp(Math.round(((D.fsz || 1) + (a === 'fsup' ? .05 : -.05)) * 100) / 100, .6, 1.8); touch(); reflow(); syncPanel(); }
   else if (a === 'sigclr') { S().sig.strokes = []; redraw(); St.saveSettings(); toast('Drawing cleared'); }
   else if (a === 'sigreset') { S().sigText = null; St.saveSettings(); toast('New signature text will use the default wording'); }
 });
